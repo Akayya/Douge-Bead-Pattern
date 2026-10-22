@@ -136,13 +136,13 @@
 │     │  ├─ MainActivity.kt
 │     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
 │     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、theme/
-│     ├─ assets/                  测试用样例图（samples/）与色板数据说明（palette/README.md）palette/    mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）
-│     ├─ assets/support/    赞助二维码：alipay.png、wechat.png（自己放，见该目录 README.txt）
+│     ├─ assets/
+│     │  ├─ palette/        mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）
+│     │  ├─ support/        赞助二维码：alipay.png、wechat.png（自己放，见该目录 README.txt）
+│     │  └─ samples/        测试用样例截图
 │     └─ res/               图标、主题、字符串
-├─ assets/
-│  ├─ palette/raw/          原始色板数据（MIT，见下）
-│  └─ samples/             参考截图样本（他平台图纸，仅作导入实验用）
-├─ docs/                    方案与决策记录（方案与范围.md、方案-M3.md）
+├─ assets/                  开发用素材（samples/ 参考截图、palette/README.md 数据来源说明；原始色板 raw/ 不入库）
+├─ docs/                    方案与决策记录（方案与范围.md、方案-M3.md、交接文档.md）
 ├─ screenshots/             模拟器截图，按里程碑分子目录（不入库）
 └─ scripts/
    ├─ build.ps1             构建 debug APK
