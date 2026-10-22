@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.pindou.app.data.PaletteStore
 import com.pindou.app.data.Pattern
+import com.pindou.app.data.CostSettings
 import com.pindou.app.data.InventoryStore
 import com.pindou.app.data.PatternStore
 import com.pindou.app.data.SamplePatterns
@@ -39,6 +40,7 @@ fun AppRoot() {
     val context = LocalContext.current
     val store = remember { PaletteStore(context) }
     val inventory = remember { InventoryStore(context) }
+    val cost = remember { CostSettings(context) }
     val patterns = remember { mutableStateListOf<Pattern>() }
     var screen by remember { mutableStateOf<Screen>(Screen.Library) }
 
@@ -112,6 +114,10 @@ fun AppRoot() {
                 PatternStore.delete(context, p.id)
                 patterns.removeAll { it.id == p.id }
             },
+            onRestore = { p ->
+                PatternStore.save(context, p)
+                if (patterns.none { it.id == p.id }) patterns.add(0, p)
+            },
         )
 
         Screen.Import -> ImportScreen(
@@ -153,6 +159,7 @@ fun AppRoot() {
                 BuildModeScreen(
                     pattern = pattern,
                     palette = store.palette(pattern.paletteId),
+                    minutesPer100 = cost.minutesPer100,
                     onBack = { screen = Screen.Detail(pattern.id) },
                     onPatternChanged = { updated ->
                         val index = patterns.indexOfFirst { it.id == updated.id }

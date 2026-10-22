@@ -43,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
@@ -53,6 +54,7 @@ import com.pindou.app.data.Pattern
 import com.pindou.app.data.PatternStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import kotlin.math.min
 
 private enum class BuildView(val label: String) {
@@ -68,6 +70,7 @@ fun BuildModeScreen(
     palette: Palette,
     onBack: () -> Unit,
     onPatternChanged: (Pattern) -> Unit,
+    minutesPer100: Float = 5f,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -79,6 +82,7 @@ fun BuildModeScreen(
     var showCodes by remember { mutableStateOf(false) }
     var highlight by remember { mutableIntStateOf(-1) }
     var row by remember { mutableIntStateOf(0) }
+    var cursor by remember { mutableIntStateOf(-1) }
 
     val usage = remember(pattern.id) { pattern.usage(palette) }
 
@@ -208,7 +212,45 @@ fun BuildModeScreen(
                 Text("$finished / $total", style = MaterialTheme.typography.labelMedium)
             }
 
-            val groupColor = if (view == BuildView.ByColor) highlight else -1
+            val remainMinutes = ((total - finished) / 100f * minutesPer100).roundToInt()
+            if (total - finished > 0) {
+                Text(
+                    text = "还剩 ${total - finished} 颗 · 约 $remainMinutes 分钟",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+            }
+
+            fun jumpToNextUndone() {
+        val n = pattern.width * pattern.height
+        if (n <= 0) return
+        val start = if (cursor in 0 until n) cursor + 1 else 0
+        var found = -1
+        for (k in 0 until n) {
+            val idx = (start + k) % n
+            if (pattern.cells[idx] >= 0 && idx !in done) {
+                found = idx
+                break
+            }
+        }
+        if (found < 0) {
+            scope.launch { snackbar.showSnackbar("全部拼完了") }
+            return
+        }
+        cursor = found
+        val r = found / pattern.width
+        val c = found % pattern.width
+        when (view) {
+            BuildView.ByRow -> { row = r; highlight = r }
+            BuildView.ByColor -> highlight = pattern.cells[found]
+            BuildView.All -> Unit
+        }
+        val code = palette.get(pattern.cells[found])?.code ?: ""
+        scope.launch { snackbar.showSnackbar("第 ${r + 1} 行 · 第 ${c + 1} 列 · $code") }
+    }
+
+    val groupColor = if (view == BuildView.ByColor) highlight else -1
             val groupRow = if (view == BuildView.ByRow) highlight else -1
 
             BoxWithConstraints(
@@ -338,6 +380,19 @@ fun BuildModeScreen(
                         }
                     }
 
+                    if (cursor in 0 until pattern.width * pattern.height) {
+                        val cxx = cursor % pattern.width
+                        val cyy = cursor / pattern.width
+                        val ccx = ox + cxx * cell + cell / 2f
+                        val ccy = oy + cyy * cell + cell / 2f
+                        drawCircle(
+                            color = Color(0xFF6C4BF4),
+                            radius = cell * 0.46f,
+                            center = Offset(ccx, ccy),
+                            style = Stroke(width = (cell * 0.12f).coerceAtLeast(2f)),
+                        )
+                    }
+
                     if (showCodes && cell >= 9f) {
                         val paint = android.graphics.Paint().apply {
                             isAntiAlias = true
@@ -367,12 +422,18 @@ fun BuildModeScreen(
                 }
             }
 
-            Text(
-                text = "点格子打勾，长按清掉当前${if (view == BuildView.ByColor) "颜色" else "行"}的勾",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            )
+            Row(
+                Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "点格子打勾，长按清掉当前${if (view == BuildView.ByColor) "颜色" else "行"}的勾",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { jumpToNextUndone() }) { Text("下一处未完成 ›") }
+            }
         }
     }
 }

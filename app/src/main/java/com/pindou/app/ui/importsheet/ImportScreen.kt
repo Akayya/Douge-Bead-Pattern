@@ -22,7 +22,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -86,6 +88,8 @@ fun ImportScreen(
     var maxColors by remember { mutableIntStateOf(12) }
     var onlyOwned by remember { mutableStateOf(true) }
     var autoClean by remember { mutableStateOf(true) }
+    var showSaveDialog by remember { mutableStateOf(false) }
+    var saveName by remember { mutableStateOf("") }
     var trimBg by remember { mutableStateOf(true) }
 
     var preview by remember { mutableStateOf<Pattern?>(null) }
@@ -442,21 +446,9 @@ fun ImportScreen(
 
                 Button(
                     onClick = {
-                        val p = preview ?: return@Button
                         val stamp = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
-                        val now = System.currentTimeMillis()
-                        val saved = Pattern(
-                            id = Pattern.newId(),
-                            name = "图片 · $stamp",
-                            width = p.width,
-                            height = p.height,
-                            paletteId = palette.id,
-                            cells = p.cells.copyOf(),
-                            createdAt = now,
-                            updatedAt = now,
-                        )
-                        PatternStore.save(context, saved)
-                        onSaved(saved)
+                        saveName = "图片 · $stamp"
+                        showSaveDialog = true
                     },
                     enabled = preview != null && !generating,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -466,6 +458,53 @@ fun ImportScreen(
                 Spacer(Modifier.height(20.dp))
             }
         }
+    }
+    if (showSaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveDialog = false },
+            title = { Text("保存图纸") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = saveName,
+                        onValueChange = { saveName = it },
+                        singleLine = true,
+                        label = { Text("图纸名称") },
+                    )
+                    Text(
+                        text = "保存后还能在库页长按改名",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val p = preview ?: return@TextButton
+                    val name = saveName.trim().ifEmpty {
+                        SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
+                    }
+                    val now = System.currentTimeMillis()
+                    val saved = Pattern(
+                        id = Pattern.newId(),
+                        name = name,
+                        width = p.width,
+                        height = p.height,
+                        paletteId = palette.id,
+                        cells = p.cells.copyOf(),
+                        createdAt = now,
+                        updatedAt = now,
+                    )
+                    PatternStore.save(context, saved)
+                    showSaveDialog = false
+                    onSaved(saved)
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSaveDialog = false }) { Text("取消") }
+            },
+        )
     }
 }
 

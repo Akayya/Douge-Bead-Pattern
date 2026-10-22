@@ -31,6 +31,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -38,12 +42,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.pindou.app.data.Palette
 import com.pindou.app.data.Pattern
 import com.pindou.app.ui.PatternThumb
@@ -65,12 +71,15 @@ fun LibraryScreen(
     onRename: (Pattern, String) -> Unit = { _, _ -> },
     onDuplicate: (Pattern) -> Unit = {},
     onDelete: (Pattern) -> Unit = {},
+    onRestore: (Pattern) -> Unit = {},
 ) {
     var renameTarget by remember { mutableStateOf<Pattern?>(null) }
     var deleteTarget by remember { mutableStateOf<Pattern?>(null) }
     var showBlank by remember { mutableStateOf(false) }
     var blankW by remember { mutableStateOf("29") }
     var blankH by remember { mutableStateOf("29") }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -123,6 +132,7 @@ fun LibraryScreen(
                 )
             }
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { inner ->
         if (patterns.isEmpty()) {
             Box(
@@ -188,11 +198,21 @@ fun LibraryScreen(
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("删除图纸") },
-            text = { Text("「${target.name}」会从这座手机里删掉，不能恢复。") },
+            text = { Text("「${target.name}」会从这座手机里删掉。删错了可以点下面的「撤销」。") },
             confirmButton = {
                 TextButton(onClick = {
-                    onDelete(target)
+                    val deleted = target
+                    onDelete(deleted)
                     deleteTarget = null
+                    scope.launch {
+                        val result = snackbar.showSnackbar(
+                            message = "已删除「${deleted.name}」",
+                            actionLabel = "撤销",
+                            withDismissAction = true,
+                            duration = SnackbarDuration.Long,
+                        )
+                        if (result == SnackbarResult.ActionPerformed) onRestore(deleted)
+                    }
                 }) { Text("删除") }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } },
@@ -328,10 +348,10 @@ private fun PatternRow(
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = if (pct >= 100) {
-                                    "已拼完 ${pattern.doneCount}/${pattern.beadCount}"
-                                } else {
-                                    "施工 $pct%  ${pattern.doneCount}/${pattern.beadCount}"
+                                text = when {
+                                    pct >= 100 -> "已拼完 ${pattern.doneCount}/${pattern.beadCount}"
+                                    pct < 1 -> "施工 ${pattern.doneCount}/${pattern.beadCount}"
+                                    else -> "施工 $pct%  ${pattern.doneCount}/${pattern.beadCount}"
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (pct >= 100) {
