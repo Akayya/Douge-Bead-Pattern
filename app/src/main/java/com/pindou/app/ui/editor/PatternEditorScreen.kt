@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -58,6 +60,7 @@ import com.pindou.app.data.Pattern
 import com.pindou.app.data.PatternStore
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 
 private enum class EditorTool(val label: String) {
@@ -65,11 +68,70 @@ private enum class EditorTool(val label: String) {
     Eraser("橡皮"),
     Bucket("油漆桶"),
     Picker("吸管"),
+    Line("直线"),
+    Rect("矩形"),
 }
 
 private const val EMPTY_COLOR = 0xFFEDEDF2.toInt()
 
-@OptIn(ExperimentalMaterial3Api::class)
+private data class ShapePreview(val start: Int, val end: Int, val tool: EditorTool)
+
+private fun lineCells(width: Int, from: Int, to: Int): List<Int> {
+    val out = ArrayList<Int>()
+    var x0 = from % width
+    var y0 = from / width
+    val x1 = to % width
+    val y1 = to / width
+    val dx = abs(x1 - x0)
+    val dy = abs(y1 - y0)
+    val sx = if (x0 < x1) 1 else -1
+    val sy = if (y0 < y1) 1 else -1
+    var err = dx - dy
+    while (true) {
+        out.add(y0 * width + x0)
+        if (x0 == x1 && y0 == y1) break
+        val e2 = 2 * err
+        if (e2 > -dy) {
+            err -= dy
+            x0 += sx
+        }
+        if (e2 < dx) {
+            err += dx
+            y0 += sy
+        }
+    }
+    return out
+}
+
+private fun rectOutlineCells(width: Int, from: Int, to: Int): List<Int> {
+    val ax = from % width
+    val ay = from / width
+    val bx = to % width
+    val by = to / width
+    val left = min(ax, bx)
+    val right = max(ax, bx)
+    val top = min(ay, by)
+    val bottom = max(ay, by)
+    val out = LinkedHashSet<Int>()
+    for (x in left..right) {
+        out.add(top * width + x)
+        out.add(bottom * width + x)
+    }
+    for (y in top..bottom) {
+        out.add(y * width + left)
+        out.add(y * width + right)
+    }
+    return out.toList()
+}
+
+private fun shapeCells(width: Int, preview: ShapePreview): List<Int> =
+    if (preview.tool == EditorTool.Rect) {
+        rectOutlineCells(width, preview.start, preview.end)
+    } else {
+        lineCells(width, preview.start, preview.end)
+    }
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun PatternEditorScreen(
     pattern: Pattern,
@@ -105,6 +167,8 @@ fun PatternEditorScreen(
     var showReplace by remember { mutableStateOf(false) }
     var showBrushPicker by remember { mutableStateOf(false) }
     var showTargetPicker by remember { mutableStateOf(false) }
+    var mirror by remember { mutableStateOf(false) }
+    var shapePreview by remember { mutableStateOf<ShapePreview?>(null) }
 
     // 色条只放本图用到的色，另外保证当前画笔色一定在里面
     val stripColors = remember(usedColors, brush) {
@@ -117,32 +181,31 @@ fun PatternEditorScreen(
         undoStack.addLast(snapshot)
     }
 
-    fun paintLine(from: Int, to: Int, value: Int) {
-        if (from < 0 || to < 0) return
-        var x0 = from % pattern.width
-        var y0 = from / pattern.width
-        val x1 = to % pattern.width
-        val y1 = to / pattern.width
-        val dx = abs(x1 - x0)
-        val dy = abs(y1 - y0)
-        val sx = if (x0 < x1) 1 else -1
-        val sy = if (y0 < y1) 1 else -1
-        var err = dx - dy
-        while (true) {
-            if (x0 in 0 until pattern.width && y0 in 0 until pattern.height) {
-                cells[y0 * pattern.width + x0] = value
-            }
-            if (x0 == x1 && y0 == y1) break
-            val e2 = 2 * err
-            if (e2 > -dy) {
-                err -= dy
-                x0 += sx
-            }
-            if (e2 < dx) {
-                err += dx
-                y0 += sy
+    // 镜像只作用于逐格写入；油漆桶按区域填色，不跟着翻
+    fun applyCells(indices: Collection<Int>, value: Int): Boolean {
+        var changed = false
+        val targets = LinkedHashSet<Int>(indices.size * 2)
+        for (idx in indices) {
+            if (idx !in cells.indices) continue
+            targets.add(idx)
+            if (mirror) {
+                val x = idx % pattern.width
+                val y = idx / pattern.width
+                targets.add(y * pattern.width + (pattern.width - 1 - x))
             }
         }
+        for (idx in targets) {
+            if (cells[idx] != value) {
+                cells[idx] = value
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    fun paintLine(from: Int, to: Int, value: Int) {
+        if (from < 0 || to < 0) return
+        applyCells(lineCells(pattern.width, from, to), value)
         dirty = true
         version++
     }
@@ -244,7 +307,7 @@ fun PatternEditorScreen(
                 Canvas(
                     Modifier
                         .fillMaxSize()
-                        .pointerInput(pattern.width, pattern.height, tool) {
+                        .pointerInput(pattern.width, pattern.height, tool, mirror) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
                                 val snapshot = cells.copyOf()
@@ -263,17 +326,12 @@ fun PatternEditorScreen(
                                             painted = true
                                         }
                                         EditorTool.Eraser -> {
-                                            if (cells[idx] >= 0) {
-                                                cells[idx] = -1
-                                                painted = true
-                                            }
+                                            if (applyCells(listOf(idx), -1)) painted = true
                                         }
                                         EditorTool.Brush -> {
-                                            if (cells[idx] != brush) {
-                                                cells[idx] = brush
-                                                painted = true
-                                            }
+                                            if (applyCells(listOf(idx), brush)) painted = true
                                         }
+                                        EditorTool.Line, EditorTool.Rect -> Unit
                                     }
                                 }
 
@@ -296,6 +354,45 @@ fun PatternEditorScreen(
                                             val e = awaitPointerEvent()
                                             e.changes.forEach { it.consume() }
                                             if (!e.changes.any { it.pressed }) break
+                                        }
+                                        return@awaitEachGesture
+                                    }
+                                    EditorTool.Line, EditorTool.Rect -> {
+                                        if (lastIdx >= 0) {
+                                            shapePreview = ShapePreview(lastIdx, lastIdx, tool)
+                                        }
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            if (event.changes.count { it.pressed } > 1) {
+                                                multi = true
+                                                shapePreview = null
+                                            }
+                                            if (multi) {
+                                                val zoom = event.calculateZoom()
+                                                val pan = event.calculatePan()
+                                                if (zoom != 1f) scale = (scale * zoom).coerceIn(1f, 8f)
+                                                offset += pan
+                                            } else {
+                                                val idx = indexAt(event.changes.first().position)
+                                                val p = shapePreview
+                                                if (idx >= 0 && p != null && idx != p.end) {
+                                                    shapePreview = p.copy(end = idx)
+                                                }
+                                            }
+                                            val pressed = event.changes.any { it.pressed }
+                                            event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                            if (!pressed) break
+                                        }
+                                        val p = shapePreview
+                                        shapePreview = null
+                                        if (!multi && p != null) {
+                                            if (applyCells(shapeCells(pattern.width, p), brush)) {
+                                                painted = true
+                                            }
+                                        }
+                                        if (painted) {
+                                            version++
+                                            pushUndo(snapshot)
                                         }
                                         return@awaitEachGesture
                                     }
@@ -348,6 +445,27 @@ fun PatternEditorScreen(
                             drawRect(Color(argb), Offset(left, top), Size(cell, cell))
                         }
                     }
+                    val preview = shapePreview
+                    if (preview != null) {
+                        val previewColor = Color(palette.get(brush)?.argb ?: EMPTY_COLOR)
+                        for (idx in shapeCells(pattern.width, preview)) {
+                            val x = idx % pattern.width
+                            val y = idx / pattern.width
+                            drawRect(
+                                previewColor,
+                                Offset(ox + x * cell, oy + y * cell),
+                                Size(cell, cell),
+                            )
+                            if (mirror) {
+                                val mx = pattern.width - 1 - x
+                                drawRect(
+                                    previewColor,
+                                    Offset(ox + mx * cell, oy + y * cell),
+                                    Size(cell, cell),
+                                )
+                            }
+                        }
+                    }
                     if (cell >= 5f) {
                         val gridColor = Color(0x33555566)
                         for (x in 0..pattern.width) {
@@ -367,17 +485,31 @@ fun PatternEditorScreen(
                             )
                         }
                     }
+                    if (mirror) {
+                        val axisX = ox + pattern.width * cell / 2f
+                        drawLine(
+                            Color(0x666C4BF4),
+                            Offset(axisX, oy),
+                            Offset(axisX, oy + pattern.height * cell),
+                            1.5f,
+                        )
+                    }
                 }
             }
 
-            Row(
+            FlowRow(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 EditorTool.entries.forEach { t ->
                     FilterChip(selected = tool == t, onClick = { tool = t }, label = { Text(t.label) })
                 }
+                FilterChip(
+                    selected = mirror,
+                    onClick = { mirror = !mirror },
+                    label = { Text("左右镜像") },
+                )
             }
 
             LazyRow(
