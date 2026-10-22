@@ -31,7 +31,7 @@ object PatternPdf {
     private const val A4_W = 595
     private const val A4_H = 842
     private const val MARGIN = 26f
-    private const val HEADER = 34f
+    private const val HEADER = 44f
     private const val FOOTER = 26f
     private const val CELL = 15f
 
@@ -202,6 +202,21 @@ object PatternPdf {
             }
         }
 
+        // 空格填淡灰：打印后能一眼分开「白豆」和「不放豆」
+        val emptyFill = Paint().apply {
+            isAntiAlias = false
+            color = Color.parseColor("#ECECF1")
+        }
+        for (y in 0 until rows) {
+            for (x in 0 until cols) {
+                val v = pattern.cells[(y0 + y) * pattern.width + (x0 + x)]
+                if (v >= 0) continue
+                val left = gridLeft + x * CELL
+                val top = gridTop + y * CELL
+                c.drawRect(left, top, left + CELL, top + CELL, emptyFill)
+            }
+        }
+
         // 网格线
         val thin = Paint().apply {
             isAntiAlias = false
@@ -230,6 +245,35 @@ object PatternPdf {
                 gridLeft, py, gridLeft + cols * CELL, py,
                 if (boardLine) thick else thin,
             )
+        }
+
+        // 行列刻度：每 5 格标一次绝对行列号，拼的时候好数
+        val tick = Paint().apply {
+            isAntiAlias = true
+            textSize = 6f
+            color = Color.parseColor("#99101018")
+        }
+        tick.textAlign = Paint.Align.CENTER
+        var cxTick = 0
+        while (cxTick < cols) {
+            c.drawText(
+                "${x0 + cxTick + 1}",
+                gridLeft + cxTick * CELL + CELL / 2f,
+                gridTop - 4f,
+                tick,
+            )
+            cxTick += 5
+        }
+        tick.textAlign = Paint.Align.RIGHT
+        var ryTick = 0
+        while (ryTick < rows) {
+            c.drawText(
+                "${y0 + ryTick + 1}",
+                gridLeft - 3f,
+                gridTop + ryTick * CELL + CELL * 0.7f,
+                tick,
+            )
+            ryTick += 5
         }
 
         // 色号字（格子够大时才画）
