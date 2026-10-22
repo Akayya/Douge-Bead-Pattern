@@ -11,3 +11,4 @@ externalNativeBuild
 /.kotlin
 /screenshots/*.png
 /assets/palette/raw/
+/screenshots/*.pdf
