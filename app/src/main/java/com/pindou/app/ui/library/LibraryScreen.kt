@@ -27,6 +27,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -310,6 +311,37 @@ private fun PatternRow(
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (pattern.doneCount > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        val pct = (pattern.progress * 100).toInt()
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            LinearProgressIndicator(
+                                progress = { pattern.progress },
+                                modifier = Modifier.weight(1f).height(6.dp),
+                                strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                color = if (pct >= 100) {
+                                    MaterialTheme.colorScheme.tertiary
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = if (pct >= 100) {
+                                    "已拼完 ${pattern.doneCount}/${pattern.beadCount}"
+                                } else {
+                                    "施工 $pct%  ${pattern.doneCount}/${pattern.beadCount}"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (pct >= 100) {
+                                    MaterialTheme.colorScheme.tertiary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
