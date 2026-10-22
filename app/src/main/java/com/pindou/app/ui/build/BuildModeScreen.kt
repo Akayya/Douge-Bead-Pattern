@@ -80,6 +80,7 @@ fun BuildModeScreen(
     var doneVersion by remember { mutableIntStateOf(0) }
     var view by remember { mutableStateOf(BuildView.All) }
     var showCodes by remember { mutableStateOf(false) }
+    var onlyUndone by remember { mutableStateOf(false) }
     var highlight by remember { mutableIntStateOf(-1) }
     var row by remember { mutableIntStateOf(0) }
     var cursor by remember { mutableIntStateOf(-1) }
@@ -147,6 +148,11 @@ fun BuildModeScreen(
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                FilterChip(
+                    selected = onlyUndone,
+                    onClick = { onlyUndone = !onlyUndone },
+                    label = { Text("未完成") },
+                )
                 FilterChip(
                     selected = showCodes,
                     onClick = { showCodes = !showCodes },
@@ -320,7 +326,12 @@ fun BuildModeScreen(
                             val v = pattern.cells[idx]
                             val left = ox + x * cell
                             val top = oy + y * cell
-                            val argb = if (v < 0) 0xFFEDEDF2.toInt() else (palette.get(v)?.argb ?: 0xFFEDEDF2.toInt())
+                            val hidden = onlyUndone && idx in done
+                            val argb = if (v < 0 || hidden) {
+                                0xFFEDEDF2.toInt()
+                            } else {
+                                palette.get(v)?.argb ?: 0xFFEDEDF2.toInt()
+                            }
                             drawRect(Color(argb), Offset(left, top), Size(cell, cell))
                             val inGroup = (groupColor < 0 || v == groupColor) &&
                                 (groupRow < 0 || y == groupRow)
@@ -331,7 +342,7 @@ fun BuildModeScreen(
                                     Size(cell, cell),
                                 )
                             }
-                            if (idx in done) {
+                            if (idx in done && !onlyUndone) {
                                 val c = Offset(left + cell / 2f, top + cell / 2f)
                                 drawCircle(Color(0x33000000), radius = cell * 0.46f, center = c)
                                 drawCircle(Color(0xFF6C4BF4), radius = cell * 0.26f, center = c)
@@ -403,8 +414,10 @@ fun BuildModeScreen(
                             val native = canvas.nativeCanvas
                             for (yy in 0 until pattern.height) {
                                 for (xx in 0 until pattern.width) {
-                                    val vv = pattern.cells[yy * pattern.width + xx]
+                                    val ii = yy * pattern.width + xx
+                                    val vv = pattern.cells[ii]
                                     if (vv < 0) continue
+                                    if (onlyUndone && ii in done) continue
                                     val col = palette.get(vv) ?: continue
                                     val codeText = col.code
                                     if (codeText.length > 3) continue
