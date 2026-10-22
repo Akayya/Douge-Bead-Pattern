@@ -93,6 +93,9 @@ fun PatternDetailScreen(
     var exporting by remember { mutableStateOf(false) }
     var reduceTo by remember { mutableFloatStateOf(6f) }
     var strength by remember { mutableStateOf(PatternCleaner.Strength.MEDIUM) }
+    // 详情页的一次性操作（去杂点 / 减色 / 画布变换）都会覆盖原图，
+    // 这里存一份改动前的快照，给「撤销上一步」用；只保留一步，够救命就行。
+    var undoPattern by remember(pattern.id) { mutableStateOf<Pattern?>(null) }
 
     // 图纸库那边刷新了同一个图纸（比如改了名）就同步过来
     LaunchedEffect(pattern) {
@@ -106,6 +109,22 @@ fun PatternDetailScreen(
         if (have >= item.count) null else item.color.code to (item.count - have)
     }
     val missingTotal = shortages.sumOf { it.second }
+
+    fun commit(updated: Pattern) {
+        undoPattern = current
+        PatternStore.save(context, updated)
+        current = updated
+        onPatternChanged(updated)
+    }
+
+    fun undoLast() {
+        val back = undoPattern ?: return
+        PatternStore.save(context, back)
+        current = back
+        onPatternChanged(back)
+        undoPattern = null
+        scope.launch { snackbar.showSnackbar("已撤销上一步") }
+    }
 
     fun applyTransform(res: PatternTransform.Result) {
         val label = res.label
@@ -124,9 +143,7 @@ fun PatternDetailScreen(
             updatedAt = System.currentTimeMillis(),
             done = mutableSetOf(),
         )
-        PatternStore.save(context, updated)
-        current = updated
-        onPatternChanged(updated)
+        commit(updated)
         scope.launch { snackbar.showSnackbar("$label，施工进度已清空") }
     }
 
@@ -229,6 +246,17 @@ fun PatternDetailScreen(
                                 color = MaterialTheme.colorScheme.error,
                             )
                         }
+                    }
+                }
+            }
+
+            if (undoPattern != null) {
+                item {
+                    OutlinedButton(
+                        onClick = { undoLast() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("撤销上一步（回到改之前）")
                     }
                 }
             }
@@ -444,9 +472,7 @@ fun PatternDetailScreen(
                         updatedAt = System.currentTimeMillis(),
                         done = current.done,
                     )
-                    PatternStore.save(context, updated)
-                    current = updated
-                    onPatternChanged(updated)
+                    commit(updated)
                     scope.launch {
                         snackbar.showSnackbar(
                             if (res.changed == 0) "没有找到杂点" else "清掉 ${res.changed} 个杂点",
@@ -505,9 +531,7 @@ fun PatternDetailScreen(
                         updatedAt = System.currentTimeMillis(),
                         done = current.done,
                     )
-                    PatternStore.save(context, updated)
-                    current = updated
-                    onPatternChanged(updated)
+                    commit(updated)
                     scope.launch { snackbar.showSnackbar("并掉 ${res.mergedColors} 个色号，改动 ${res.changed} 格") }
                 }) { Text("执行") }
             },
