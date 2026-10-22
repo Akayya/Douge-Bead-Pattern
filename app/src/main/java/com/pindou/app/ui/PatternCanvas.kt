@@ -1,6 +1,7 @@
 package com.pindou.app.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,15 +12,24 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.pindou.app.data.Palette
 import com.pindou.app.data.Pattern
+import com.pindou.app.data.PatternThumbCache
 
 /**
  * 图纸缩略图 / 预览：直接按色板颜色铺方块。空格留背景色。
@@ -85,9 +95,18 @@ fun PatternCanvas(
     }
 }
 
-/** 卡片里用的小缩略图，白底圆角，尺寸固定。 */
+/** 卡片里用的小缩略图，白底圆角，尺寸固定。优先显示落盘的位图缓存。 */
 @Composable
 fun PatternThumb(pattern: Pattern, palette: Palette, size: Dp, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val cellsHash = pattern.cells.contentHashCode()
+    var bitmap by remember(pattern.id, cellsHash) {
+        mutableStateOf(PatternThumbCache.memoryGet(pattern))
+    }
+    LaunchedEffect(pattern.id, cellsHash, palette) {
+        val cached = PatternThumbCache.load(context, pattern, palette)
+        if (cached != null) bitmap = cached
+    }
     Surface(
         modifier = modifier
             .size(size)
@@ -95,13 +114,24 @@ fun PatternThumb(pattern: Pattern, palette: Palette, size: Dp, modifier: Modifie
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
         Box(Modifier.fillMaxSize().padding(4.dp)) {
-            PatternCanvas(
-                pattern = pattern,
-                palette = palette,
-                modifier = Modifier.fillMaxSize(),
-                // 缩略图太小，画分区线只会变成一道黑杠，关掉
-                boardSize = 0,
-            )
+            val bmp = bitmap
+            if (bmp != null) {
+                val image = remember(bmp) { bmp.asImageBitmap() }
+                Image(
+                    bitmap = image,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
+            } else {
+                PatternCanvas(
+                    pattern = pattern,
+                    palette = palette,
+                    modifier = Modifier.fillMaxSize(),
+                    // 缩略图太小，画分区线只会变成一道黑杠，关掉
+                    boardSize = 0,
+                )
+            }
         }
     }
 }

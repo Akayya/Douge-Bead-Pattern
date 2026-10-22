@@ -14,6 +14,7 @@ import com.pindou.app.data.Pattern
 import com.pindou.app.data.CostSettings
 import com.pindou.app.data.InventoryStore
 import com.pindou.app.data.PatternStore
+import com.pindou.app.data.PatternThumbCache
 import com.pindou.app.data.SamplePatterns
 import com.pindou.app.ui.about.AboutScreen
 import com.pindou.app.ui.build.BuildModeScreen
@@ -112,6 +113,7 @@ fun AppRoot() {
             },
             onDelete = { p ->
                 PatternStore.delete(context, p.id)
+                PatternThumbCache.delete(context, p.id)
                 patterns.removeAll { it.id == p.id }
             },
             onRestore = { p ->

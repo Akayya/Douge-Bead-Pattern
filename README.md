@@ -126,6 +126,12 @@
 - **防误触开关**（默认开）：已打勾的格子再点不会掉勾，只会提示「要改请长按那一行」；关掉后恢复「再点取消」。
 - **「下一处未完成」不再用弹窗**：提示改到画布上方的状态行（「下一处：第 1 行 · 第 24 列 · H2」），不挡按钮；放大状态下会自动把目标格子拖到画面中间。
 
+## 缩略图缓存（0.6.3）
+
+- 库页缩略图不再每帧重画所有格子：`data/PatternThumbCache.kt` 按「尺寸 + 色板 + cells 内容哈希」渲染一次 256px 位图，内存 LruCache（8MB）+ `filesDir/thumbs/<id>-<尺寸>-<色板>-<哈希>.png` 双缓存，之后滚动直接贴图。
+- 施工打勾只改 `updatedAt`，cells 哈希不变，所以不会重建缩略图；编辑、去杂点、减色、画布变换改了内容会自动换新 key，并清掉同一张图纸的旧文件。
+- 删除图纸时一起删缓存；没显示过的图纸不预生成，滚到哪生成到哪。
+
 ## 目录结构
 
 ```
@@ -134,7 +140,7 @@
 │  └─ src/main/
 │     ├─ java/com/pindou/app/
 │     │  ├─ MainActivity.kt
-│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
+│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternThumbCache（缩略图缓存）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
 │     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、theme/
 │     ├─ assets/
 │     │  ├─ palette/        mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）
