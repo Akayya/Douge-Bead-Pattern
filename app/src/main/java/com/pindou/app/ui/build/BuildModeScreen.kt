@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,6 +43,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -73,6 +76,7 @@ fun BuildModeScreen(
     val done = remember(pattern.id) { pattern.done.toMutableSet() }
     var doneVersion by remember { mutableIntStateOf(0) }
     var view by remember { mutableStateOf(BuildView.All) }
+    var showCodes by remember { mutableStateOf(false) }
     var highlight by remember { mutableIntStateOf(-1) }
     var row by remember { mutableIntStateOf(0) }
 
@@ -138,6 +142,12 @@ fun BuildModeScreen(
                         label = { Text(v.label) },
                     )
                 }
+                Spacer(Modifier.weight(1f))
+                FilterChip(
+                    selected = showCodes,
+                    onClick = { showCodes = !showCodes },
+                    label = { Text("色号") },
+                )
             }
 
             if (view == BuildView.ByColor) {
@@ -325,6 +335,33 @@ fun BuildModeScreen(
                                 (cell * 0.14f).coerceAtLeast(1.5f),
                             )
                             by += 29
+                        }
+                    }
+
+                    if (showCodes && cell >= 9f) {
+                        val paint = android.graphics.Paint().apply {
+                            isAntiAlias = true
+                            textAlign = android.graphics.Paint.Align.CENTER
+                            textSize = (cell * 0.52f).coerceAtMost(13f)
+                        }
+                        drawIntoCanvas { canvas ->
+                            val native = canvas.nativeCanvas
+                            for (yy in 0 until pattern.height) {
+                                for (xx in 0 until pattern.width) {
+                                    val vv = pattern.cells[yy * pattern.width + xx]
+                                    if (vv < 0) continue
+                                    val col = palette.get(vv) ?: continue
+                                    val codeText = col.code
+                                    if (codeText.length > 3) continue
+                                    val lum = (0.299f * android.graphics.Color.red(col.argb) +
+                                        0.587f * android.graphics.Color.green(col.argb) +
+                                        0.114f * android.graphics.Color.blue(col.argb))
+                                    paint.color = if (lum > 150f) 0xCC1A1A1A.toInt() else 0xEEFFFFFF.toInt()
+                                    val cx = ox + xx * cell + cell / 2f
+                                    val cy = oy + yy * cell + cell * 0.70f
+                                    native.drawText(codeText, cx, cy, paint)
+                                }
+                            }
                         }
                     }
                 }
