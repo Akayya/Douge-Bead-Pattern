@@ -169,6 +169,20 @@ fun BuildModeScreen(
         doneVersion++
     }
 
+    // 逐色视图：把当前颜色剩下的格子一次勾完，适合大面积纯色
+    fun markColorAll() {
+        val gc = groupColor()
+        if (gc < 0) return
+        val targets = pattern.cells.indices.filter { pattern.cells[it] == gc && it !in done }
+        if (targets.isEmpty()) {
+            status = "这一色已经全勾完了"
+            return
+        }
+        done.addAll(targets)
+        doneVersion++
+        status = "全勾 ${palette.get(gc)?.code ?: "这一色"}：补上 ${targets.size} 颗"
+    }
+
     fun clearGroup(idx: Int) {
         if (idx < 0) {
             status = "这里还没有打勾"
@@ -317,6 +331,33 @@ fun BuildModeScreen(
                                 )
                                 .clickable { highlight = idx; status = "" },
                         )
+                    }
+                }
+            }
+
+            if (view == BuildView.ByColor) {
+                val active = highlight
+                val colorTotal = if (active >= 0) pattern.cells.count { it == active } else 0
+                val colorDone = if (active >= 0) {
+                    done.count { it in pattern.cells.indices && pattern.cells[it] == active }
+                } else {
+                    0
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "已勾 $colorDone / $colorTotal",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = { markColorAll() },
+                        enabled = active >= 0 && colorDone < colorTotal,
+                    ) {
+                        Text("这一色全勾上")
                     }
                 }
             }
