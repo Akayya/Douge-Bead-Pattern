@@ -1,5 +1,6 @@
 package com.pindou.app.ui.pattern
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -92,6 +93,7 @@ fun PatternDetailScreen(
     var minutesText by remember { mutableStateOf("") }
     var exportingPdf by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
+    var sharing by remember { mutableStateOf(false) }
     var reduceTo by remember { mutableFloatStateOf(6f) }
     var strength by remember { mutableStateOf(PatternCleaner.Strength.MEDIUM) }
     // 详情页的一次性操作（去杂点 / 减色 / 画布变换）都会覆盖原图，
@@ -328,6 +330,39 @@ fun PatternDetailScreen(
                         enabled = !exporting,
                     ) {
                         Text(if (exporting) "导出中…" else "导出 PNG")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            if (sharing) return@OutlinedButton
+                            sharing = true
+                            scope.launch {
+                                val uri = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        PatternExporter.sharePng(context, current, palette)
+                                    }.getOrNull()
+                                }
+                                sharing = false
+                                if (uri == null) {
+                                    snackbar.showSnackbar("分享失败，检查存储空间")
+                                    return@launch
+                                }
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = "image/png"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                val opened = runCatching {
+                                    context.startActivity(
+                                        Intent.createChooser(send, "分享图纸 PNG"),
+                                    )
+                                }.isSuccess
+                                if (!opened) snackbar.showSnackbar("没有可分享的应用")
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        enabled = !sharing,
+                    ) {
+                        Text(if (sharing) "生成中…" else "分享 PNG")
                     }
                 }
             }

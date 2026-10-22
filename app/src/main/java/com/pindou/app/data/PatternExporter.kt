@@ -8,6 +8,8 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.net.Uri
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
+import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -15,7 +17,7 @@ import java.util.Locale
 
 /**
  * 把图纸画成一张 PNG：带网格、29 格分区线、底部色号清单。
- * 存到相册（Pictures/豆格），不申请存储权限：Android 10+ 用 MediaStore 插入自己创建的图片，10 以下落到应用私有目录再通知相册。
+ * 导出走 MediaStore 存相册（Pictures/豆格），分享走 cache + FileProvider；都不申请存储权限。
  */
 object PatternExporter {
 
@@ -31,6 +33,37 @@ object PatternExporter {
         palette: Palette,
         cellPx: Int = 26,
     ): Result {
+        val bmp = renderPng(pattern, palette, cellPx)
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val fileName = "豆格-$stamp.png"
+        return save(context, bmp, fileName)
+    }
+
+    /** 生成一张临时 PNG 供 ACTION_SEND 分享，返回 FileProvider 的 content:// URI。 */
+    fun sharePng(
+        context: Context,
+        pattern: Pattern,
+        palette: Palette,
+        cellPx: Int = 26,
+    ): Uri {
+        val bmp = renderPng(pattern, palette, cellPx)
+        val dir = File(context.cacheDir, "share").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val file = File(dir, "豆格-$stamp.png")
+        try {
+            file.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        } finally {
+            bmp.recycle()
+        }
+        return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    }
+
+    private fun renderPng(
+        pattern: Pattern,
+        palette: Palette,
+        cellPx: Int,
+    ): Bitmap {
         val usage = pattern.usage(palette)
         val margin = cellPx
         val header = cellPx * 2
@@ -155,9 +188,7 @@ object PatternExporter {
             ly += legendRow
         }
 
-        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-        val fileName = "豆格-$stamp.png"
-        return save(context, bmp, fileName)
+        return bmp
     }
 
     private fun save(context: Context, bmp: Bitmap, fileName: String): Result {
