@@ -12,6 +12,10 @@ Output schema (kept small on purpose, parsed with org.json on device):
   "colors": [{"code":"A1","hex":"#FAF5CD","g":"A"}, ...]
 }
 
+The raw input is NOT in the repo (4.4 MB of upstream tarball). See
+assets/palette/README.md for the download command; the generated JSONs are
+committed, so a plain build never needs this script.
+
 Usage: python scripts/build-palette-assets.py   (run from the project root)
 """
 import json

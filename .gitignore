@@ -9,6 +9,5 @@ externalNativeBuild
 .cxx
 /local.properties
 /.kotlin
-/screenshots/*.png
+/screenshots/
 /assets/palette/raw/
-/screenshots/*.pdf

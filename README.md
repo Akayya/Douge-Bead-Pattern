@@ -17,7 +17,7 @@
 | M5 | 豆仓库存（记数量、算缺口、补货成本） | ✅ 完成 |
 | — | 「关于」页 + 自愿赞助通道（静态收款码，不联网、不锁功能） | ✅ 已完成 |
 
-截图见 `screenshots/`（M1：图纸库、色板、色号明细、关于页；M2：选图、裁剪、原图网格识别、预览、保存后的详情页；M3：框选裁剪、去杂点开关、去杂点对话框与清完的效果）。
+模拟器截图在 `screenshots/`，按里程碑分六层（`m1/`…`m6/`），每层只留这个阶段最能说明问题的几张：M1 骨架与色板、M2 图片转图纸与原图网格识别、M3 编辑器/施工/画布/导出、M4 成本与 A4 PDF（含改版前后的对比图 `pdf-before-page2.png` / `pdf-after-page2.png`）、M5 豆仓库存与撤销、M6 空白画布/库页进度/施工页色号。截图不入库（`.gitignore` 里忽略整个 `screenshots/`）。
 
 ## 图片转图纸怎么算的（M2）
 
@@ -118,14 +118,14 @@
 │     │  ├─ MainActivity.kt
 │     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
 │     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、theme/
-│     ├─ assets/palette/    mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）
+│     ├─ assets/                  测试用样例图（samples/）与色板数据说明（palette/README.md）palette/    mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）
 │     ├─ assets/support/    赞助二维码：alipay.png、wechat.png（自己放，见该目录 README.txt）
 │     └─ res/               图标、主题、字符串
 ├─ assets/
 │  ├─ palette/raw/          原始色板数据（MIT，见下）
 │  └─ samples/             参考截图样本（他平台图纸，仅作导入实验用）
 ├─ docs/                    方案与决策记录（方案与范围.md、方案-M3.md）
-├─ screenshots/             模拟器截图，按里程碑命名
+├─ screenshots/             模拟器截图，按里程碑分子目录（不入库）
 └─ scripts/
    ├─ build.ps1             构建 debug APK
    ├─ install-run.ps1       启动模拟器 → 安装 → 启动 → 截图
