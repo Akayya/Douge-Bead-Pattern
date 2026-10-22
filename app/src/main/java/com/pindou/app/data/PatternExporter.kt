@@ -6,13 +6,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.media.MediaScannerConnection
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import android.provider.MediaStore
-import java.io.File
-import java.io.FileOutputStream
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -165,35 +161,22 @@ object PatternExporter {
     }
 
     private fun save(context: Context, bmp: Bitmap, fileName: String): Result {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/豆格")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            }
-            val resolver = context.contentResolver
-            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                ?: return fallback(context, bmp, fileName)
-            resolver.openOutputStream(uri)?.use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            values.clear()
-            values.put(MediaStore.Images.Media.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            bmp.recycle()
-            return Result("相册/Pictures/豆格/$fileName", "Pictures/豆格/$fileName", uri)
+        // minSdk 31：只用 MediaStore，不再有老系统兜底分支
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/豆格")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
         }
-        return fallback(context, bmp, fileName)
-    }
-
-    private fun fallback(context: Context, bmp: Bitmap, fileName: String): Result {
-        val dir = File(
-            context.getExternalFilesDir(Environment.DIRECTORY_PICTURES) ?: context.filesDir,
-            "豆格",
-        ).apply { mkdirs() }
-        val file = File(dir, fileName)
-        FileOutputStream(file).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("插入相册失败")
+        resolver.openOutputStream(uri)?.use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            ?: throw IOException("打不开输出流")
+        values.clear()
+        values.put(MediaStore.Images.Media.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
         bmp.recycle()
-        MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("image/png"), null)
-        return Result(file.absolutePath, file.absolutePath, null)
+        return Result("相册/Pictures/豆格/$fileName", "Pictures/豆格/$fileName", uri)
     }
 }

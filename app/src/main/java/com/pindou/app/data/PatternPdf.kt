@@ -9,7 +9,6 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
-import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import java.io.File
@@ -317,34 +316,27 @@ object PatternPdf {
         val fileName = "豆格-$safeName-$stamp.pdf"
         val pages = doc.pages.size
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/豆格")
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
-            }
-            val resolver = context.contentResolver
-            val uri: Uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+        // minSdk 31：只用 MediaStore.Downloads
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/豆格")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val resolver = context.contentResolver
+        val uri: Uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+        try {
             resolver.openOutputStream(uri)?.use { out ->
                 doc.writeTo(out)
                 out.flush()
             } ?: return null
-            values.clear()
-            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
-            return Result(savedAs = "下载/豆格/$fileName", pages = pages)
-        }
-
-        val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "豆格")
-        if (!dir.exists() && !dir.mkdirs()) return null
-        val file = File(dir, fileName)
-        try {
-            file.outputStream().use { out -> doc.writeTo(out) }
         } catch (e: IOException) {
             return null
         }
-        return Result(savedAs = file.absolutePath, pages = pages)
+        values.clear()
+        values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+        resolver.update(uri, values, null, null)
+        return Result(savedAs = "下载/豆格/$fileName", pages = pages)
     }
 
     /** 供界面预估页数用，不用真的生成。 */
