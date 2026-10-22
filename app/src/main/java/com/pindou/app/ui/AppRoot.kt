@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.pindou.app.data.PaletteStore
 import com.pindou.app.data.Pattern
+import com.pindou.app.data.InventoryStore
 import com.pindou.app.data.PatternStore
 import com.pindou.app.data.SamplePatterns
 import com.pindou.app.ui.about.AboutScreen
@@ -37,6 +38,7 @@ private sealed interface Screen {
 fun AppRoot() {
     val context = LocalContext.current
     val store = remember { PaletteStore(context) }
+    val inventory = remember { InventoryStore(context) }
     val patterns = remember { mutableStateListOf<Pattern>() }
     var screen by remember { mutableStateOf<Screen>(Screen.Library) }
 
@@ -101,7 +103,7 @@ fun AppRoot() {
             },
         )
 
-        Screen.Palette -> PaletteScreen(store = store, onBack = { screen = Screen.Library })
+        Screen.Palette -> PaletteScreen(store = store, inventory = inventory, onBack = { screen = Screen.Library })
 
         Screen.About -> AboutScreen(onBack = { screen = Screen.Library })
 
@@ -148,6 +150,7 @@ fun AppRoot() {
                 PatternDetailScreen(
                     pattern = pattern,
                     palette = store.palette(pattern.paletteId),
+                    inventory = inventory,
                     onBack = { screen = Screen.Library },
                     onEdit = { screen = Screen.Editor(pattern.id) },
                     onBuild = { screen = Screen.Build(pattern.id) },

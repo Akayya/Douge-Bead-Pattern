@@ -52,6 +52,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.pindou.app.data.CostSettings
+import com.pindou.app.data.InventoryStore
 import com.pindou.app.data.Palette
 import com.pindou.app.data.Pattern
 import com.pindou.app.data.PatternCleaner
@@ -70,6 +71,7 @@ import kotlinx.coroutines.withContext
 fun PatternDetailScreen(
     pattern: Pattern,
     palette: Palette,
+    inventory: InventoryStore,
     onBack: () -> Unit,
     onEdit: () -> Unit = {},
     onBuild: () -> Unit = {},
@@ -98,6 +100,12 @@ fun PatternDetailScreen(
     }
 
     val usage = current.usage(palette)
+    // 只统计「记过库存」且不够的色号；没记过的不算缺口
+    val shortages = usage.mapNotNull { item ->
+        val have = inventory.count(current.paletteId, item.color.code) ?: return@mapNotNull null
+        if (have >= item.count) null else item.color.code to (item.count - have)
+    }
+    val missingTotal = shortages.sumOf { it.second }
 
     fun applyTransform(res: PatternTransform.Result) {
         val label = res.label
@@ -212,6 +220,15 @@ fun PatternDetailScreen(
                                 " · 预计 ${CostSettings.duration(cost.minutesOf(current.beadCount))}",
                             style = MaterialTheme.typography.titleSmall,
                         )
+                        if (shortages.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "豆仓缺 ${shortages.size} 色 / 共 $missingTotal 颗" +
+                                    "（补货约 ${CostSettings.yuan(cost.priceOf(missingTotal))}）",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
                     }
                 }
             }
@@ -352,6 +369,19 @@ fun PatternDetailScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        val have = inventory.count(current.paletteId, item.color.code)
+                        if (have != null) {
+                            val short = item.count - have
+                            Text(
+                                text = if (short > 0) "库存 $have · 缺 $short" else "库存 $have · 够",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (short > 0) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                            )
+                        }
                     }
                 }
             }
