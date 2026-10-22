@@ -2,6 +2,8 @@
 
 一个纯离线的安卓拼豆辅助 App：图片转图纸、手工绘制、豆数统计、施工模式、导出。
 
+> **接手/换人开发先读 [`docs/交接文档.md`](docs/交接文档.md)**：环境路径、构建与装机命令、工程地图、硬约束、未完成方向都在里面。
+
 - App 名 **豆格**；包名 `com.pindou.app`（历史原因保持不动，真要改再动 `applicationId` / `namespace`）
 - Kotlin + Jetpack Compose，minSdk 31（Android 12）/ compileSdk 37（Android 17）
 - 不联网、不要账号、不做社区
