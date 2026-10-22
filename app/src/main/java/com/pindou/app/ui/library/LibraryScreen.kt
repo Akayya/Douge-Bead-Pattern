@@ -13,9 +13,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -23,7 +25,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,9 +55,17 @@ import kotlinx.coroutines.launch
 import com.pindou.app.data.Palette
 import com.pindou.app.data.Pattern
 import com.pindou.app.ui.PatternThumb
+import java.text.Collator
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private enum class LibrarySort(val label: String) {
+    Updated("最近更新"),
+    Created("最近创建"),
+    Name("名称"),
+    Beads("豆数"),
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,8 +88,30 @@ fun LibraryScreen(
     var showBlank by remember { mutableStateOf(false) }
     var blankW by remember { mutableStateOf("29") }
     var blankH by remember { mutableStateOf("29") }
+    var query by remember { mutableStateOf("") }
+    var sort by remember { mutableStateOf(LibrarySort.Updated) }
+    var showSort by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val collator = remember { Collator.getInstance(Locale.SIMPLIFIED_CHINESE) }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(sort, query) {
+        listState.scrollToItem(0)
+    }
+
+    // patterns 是 SnapshotStateList，直接在组合里算，增删改名后才会跟着刷新
+    val trimmedQuery = query.trim()
+    val visible = patterns
+        .filter { trimmedQuery.isEmpty() || it.name.contains(trimmedQuery, ignoreCase = true) }
+        .let { list ->
+            when (sort) {
+                LibrarySort.Updated -> list.sortedByDescending { it.updatedAt }
+                LibrarySort.Created -> list.sortedByDescending { it.createdAt }
+                LibrarySort.Name -> list.sortedWith(compareBy(collator) { it.name })
+                LibrarySort.Beads -> list.sortedByDescending { it.beadCount }
+            }
+        }
 
     Scaffold(
         topBar = {
@@ -88,7 +120,11 @@ fun LibraryScreen(
                     Column {
                         Text("豆格", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            text = "色板 $paletteTitle · ${patterns.size} 张图纸",
+                            text = if (trimmedQuery.isEmpty()) {
+                                "色板 $paletteTitle · ${patterns.size} 张图纸"
+                            } else {
+                                "色板 $paletteTitle · 找到 ${visible.size} / ${patterns.size} 张"
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -134,37 +170,127 @@ fun LibraryScreen(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { inner ->
-        if (patterns.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(inner).padding(32.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("还没有图纸", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "点右下角「图片转图纸」把照片转成图纸，或者用「空白画布」从零开始画。\n也可以先到「色板」里勾掉你手上没有的色号，出图就只用你有的豆子。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
+        Column(Modifier.fillMaxSize().padding(inner)) {
+            if (patterns.isNotEmpty()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("搜索名称") },
+                        singleLine = true,
+                        trailingIcon = {
+                            if (query.isNotEmpty()) {
+                                Box(
+                                    Modifier.size(36.dp).clickable { query = "" },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = "×",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        },
                     )
+                    Box {
+                        OutlinedButton(
+                            onClick = { showSort = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        ) {
+                            Text("${sort.label} ▼", style = MaterialTheme.typography.labelLarge)
+                        }
+                        DropdownMenu(
+                            expanded = showSort,
+                            onDismissRequest = { showSort = false },
+                        ) {
+                            LibrarySort.entries.forEach { option ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = if (option == sort) "✓ ${option.label}" else option.label,
+                                            color = if (option == sort) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            },
+                                        )
+                                    },
+                                    onClick = {
+                                        sort = option
+                                        showSort = false
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(inner),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(patterns, key = { it.id }) { pattern ->
-                    PatternRow(
-                        pattern = pattern,
-                        palette = palette,
-                        onClick = { onOpenPattern(pattern) },
-                        onRename = { renameTarget = pattern },
-                        onDuplicate = { onDuplicate(pattern) },
-                        onDelete = { deleteTarget = pattern },
-                    )
+
+            when {
+                patterns.isEmpty() -> {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().weight(1f).padding(32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("还没有图纸", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = "点右下角「图片转图纸」把照片转成图纸，或者用「空白画布」从零开始画。\n也可以先到「色板」里勾掉你手上没有的色号，出图就只用你有的豆子。",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    }
+                }
+                visible.isEmpty() -> {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().weight(1f).padding(32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "没有找到「$trimmedQuery」",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = "换个关键词试试，或者清空搜索。",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            TextButton(onClick = { query = "" }) { Text("清空搜索") }
+                        }
+                    }
+                }
+                else -> {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(visible, key = { it.id }) { pattern ->
+                            PatternRow(
+                                pattern = pattern,
+                                palette = palette,
+                                onClick = { onOpenPattern(pattern) },
+                                onRename = { renameTarget = pattern },
+                                onDuplicate = { onDuplicate(pattern) },
+                                onDelete = { deleteTarget = pattern },
+                            )
+                        }
+                    }
                 }
             }
         }
