@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -59,6 +61,8 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
     var group by remember(palette.id) { mutableStateOf<String?>(null) }
     var editColor by remember { mutableStateOf<BeadColor?>(null) }
     var editCount by remember { mutableStateOf("") }
+    var calibrateColor by remember { mutableStateOf<BeadColor?>(null) }
+    var calibrateText by remember { mutableStateOf("") }
     val shown = if (group == null) palette.colors else palette.colors.filter { it.group == group }
 
     Scaffold(
@@ -106,7 +110,7 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
             }
 
             Text(
-                "点色块切换「我有 / 没有」；长按记库存数量（拼到一半缺豆时用得上）",
+                "点色块切换「我有 / 没有」；长按记库存或校准颜色（屏幕色和实物豆子对不上时用）",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -173,6 +177,92 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
                 inventory.set(palette.id, target.code, n)
                 editColor = null
             },
+            onCalibrate = {
+                editColor = null
+                calibrateColor = target
+                calibrateText = target.hex.removePrefix("#")
+            },
+        )
+    }
+
+    val calibrating = calibrateColor
+    if (calibrating != null) {
+        val normalized = PaletteStore.normalizeHex(calibrateText)
+        val previewArgb = normalized?.let {
+            runCatching { android.graphics.Color.parseColor(it) }.getOrNull()
+        }
+        AlertDialog(
+            onDismissRequest = { calibrateColor = null },
+            title = { Text("校准 ${calibrating.code}") },
+            text = {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(44.dp)
+                                .background(
+                                    Color(previewArgb ?: calibrating.argb),
+                                    RoundedCornerShape(8.dp),
+                                )
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                "原始 ${store.originalHex(calibrating.code) ?: calibrating.hex}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                if (normalized != null) "新色 $normalized" else "输入 6 位 HEX",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = calibrateText,
+                        onValueChange = { input ->
+                            calibrateText = input
+                                .filter { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
+                                .take(6)
+                        },
+                        singleLine = true,
+                        label = { Text("屏幕 HEX") },
+                        prefix = { Text("#") },
+                        isError = normalized == null,
+                        supportingText = {
+                            if (normalized == null) Text("格式：6 位十六进制，例如 F73D48")
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "把屏幕颜色调成你手上豆子的颜色。图纸、缩略图、导出和分享的 PNG 都会跟着变，图纸格子数据不动。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = normalized != null,
+                    onClick = {
+                        store.calibrate(calibrating.code, normalized)
+                        calibrateColor = null
+                    },
+                ) { Text("保存") }
+            },
+            dismissButton = {
+                Row {
+                    if (store.calibratedHex(calibrating.code) != null) {
+                        TextButton(onClick = {
+                            store.calibrate(calibrating.code, null)
+                            calibrateColor = null
+                        }) { Text("恢复默认") }
+                    }
+                    TextButton(onClick = { calibrateColor = null }) { Text("取消") }
+                }
+            },
         )
     }
 }
@@ -185,6 +275,7 @@ private fun StockDialog(
     onDismiss: () -> Unit,
     onClear: () -> Unit,
     onSave: () -> Unit,
+    onCalibrate: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -204,6 +295,10 @@ private fun StockDialog(
                     label = { Text("颗数") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 )
+                TextButton(
+                    onClick = onCalibrate,
+                    contentPadding = PaddingValues(0.dp),
+                ) { Text("屏幕颜色和实物对不上？校准…") }
             }
         },
         confirmButton = { TextButton(onClick = onSave) { Text("保存") } },

@@ -75,6 +75,12 @@ object PatternThumbCache {
         dir(context).listFiles { f -> f.isFile && f.name.startsWith("$id-") }?.forEach { it.delete() }
     }
 
+    /** 色板校准改了颜色，缓存 key 里没有颜色信息，只能全部重画。 */
+    fun clear(context: Context) {
+        memory.evictAll()
+        dir(context).listFiles { f -> f.isFile }?.forEach { it.delete() }
+    }
+
     private fun render(pattern: Pattern, palette: Palette): Bitmap {
         val bitmap = Bitmap.createBitmap(SIDE, SIDE, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)

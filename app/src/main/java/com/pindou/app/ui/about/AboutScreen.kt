@@ -92,7 +92,7 @@ fun AboutScreen(onBack: () -> Unit) {
                 title = "色板数据来源",
                 lines = listOf(
                     "MARD 221 / 291 色号与色值来自开源数据集 HansBug/pindou-color-data（MIT 许可）。",
-                    "屏幕色值仅是参考，和实物豆子有材质、批次差异，实际选色请在色板页长按校准（后续版本）。",
+                    "屏幕色值仅是参考，和实物豆子有材质、批次差异；对不上时可在色板页长按色块校准。",
                 ),
             )
 

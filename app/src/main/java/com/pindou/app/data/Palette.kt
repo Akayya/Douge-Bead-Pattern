@@ -91,13 +91,16 @@ object PaletteId {
 }
 
 /**
- * 色板状态：当前使用的色板 + 每个色号的「我有 / 没有」开关。
+ * 色板状态：当前使用的色板 + 每个色号的「我有 / 没有」开关 + 颜色校准。
  * 转图纸做最近色映射时只在启用的色号里选，避免出图给出一堆买不到的色号。
  */
 class PaletteStore(private val context: Context) {
 
     private val file = File(context.filesDir, "palette_state.json")
+    private val calibrationFile = File(context.filesDir, "palette_calibrated.json")
     private var state: JSONObject = readState()
+    private var calibration: JSONObject = readCalibration()
+    private val baseCache = HashMap<String, Palette>()
     private val cache = HashMap<String, Palette>()
 
     var current: Palette by mutableStateOf(loadPalette(activeId()))
@@ -133,12 +136,51 @@ class PaletteStore(private val context: Context) {
 
     fun enabledColors(): List<BeadColor> = current.colors.filter { isEnabled(it.code) }
 
+    /** 填 #RRGGBB 保存校准；传 null 恢复原始色值。 */
+    fun calibrate(code: String, hex: String?) {
+        val id = current.id
+        val overrides = calibration.optJSONObject(id)
+            ?: JSONObject().also { calibration.put(id, it) }
+        if (hex == null) overrides.remove(code) else overrides.put(code, hex)
+        cache.remove(id)
+        current = loadPalette(id)
+        PatternThumbCache.clear(context)
+        persistCalibration()
+    }
+
+    fun originalHex(code: String): String? {
+        val base = basePalette(current.id)
+        val index = base.indexOf(code)
+        return if (index >= 0) base.colors[index].hex else null
+    }
+
+    fun calibratedHex(code: String): String? =
+        calibration.optJSONObject(current.id)?.optString(code)?.takeIf { it.isNotEmpty() }
+
     private fun activeId(): String = state.optString("active", PaletteId.MARD_221)
 
-    private fun loadPalette(id: String): Palette = cache.getOrPut(id) {
+    private fun basePalette(id: String): Palette = baseCache.getOrPut(id) {
         when (id) {
             PaletteId.MARD_291 -> Palette.load(context, Palette.ASSET_291)
             else -> Palette.load(context, Palette.ASSET_221)
+        }
+    }
+
+    private fun loadPalette(id: String): Palette = cache.getOrPut(id) {
+        val base = basePalette(id)
+        val overrides = calibration.optJSONObject(id)
+        if (overrides == null || overrides.length() == 0) {
+            base
+        } else {
+            Palette(
+                base.id,
+                base.title,
+                base.groups,
+                base.colors.map { color ->
+                    val hex = overrides.optString(color.code, "")
+                    if (hex.isEmpty()) color else color.copy(hex = hex)
+                },
+            )
         }
     }
 
@@ -159,4 +201,21 @@ class PaletteStore(private val context: Context) {
     private fun readState(): JSONObject = runCatching {
         if (file.exists()) JSONObject(file.readText()) else JSONObject()
     }.getOrElse { JSONObject() }
+
+    private fun persistCalibration() {
+        runCatching { calibrationFile.writeText(calibration.toString()) }
+    }
+
+    private fun readCalibration(): JSONObject = runCatching {
+        if (calibrationFile.exists()) JSONObject(calibrationFile.readText()) else JSONObject()
+    }.getOrElse { JSONObject() }
+
+    companion object {
+        private val HEX = Regex("[0-9a-fA-F]{6}")
+
+        fun normalizeHex(raw: String): String? {
+            val body = raw.trim().removePrefix("#")
+            return if (HEX.matches(body)) "#${body.uppercase()}" else null
+        }
+    }
 }

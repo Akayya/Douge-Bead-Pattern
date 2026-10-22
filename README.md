@@ -151,6 +151,14 @@
 - 面板里可直接选微信、QQ、Messages 等支持收图的应用；不需要额外申请存储权限，也不用先导出再去相册找图。
 - 每次分享前清掉上一张临时图，cache 不会越攒越大；原来的「导出 PNG」存相册路径不变。
 
+## 色板颜色校准（0.6.8）
+
+- 入口：色板页长按色块 → 库存对话框下方的「屏幕颜色和实物对不上？校准…」。
+- 输入 6 位 HEX 后，色块、库页缩略图、详情页色号明细、导出 PNG、分享 PNG 和 A4 PDF 都会使用校准后的颜色；图纸格子里存的下标不变，所以随时能「恢复默认」。
+- 校准按「色板 + 色号」保存（`filesDir/palette_calibrated.json`，如 `{"mard221":{"F2":"#00FF00"}}`），切换 221/291 不会串色；重启 App 仍然生效。
+- 校准后自动清空缩略图缓存——缓存 key 里没有颜色值，不清会继续显示旧颜色；恢复默认同样会清缓存并立即重画。
+- 新转图纸做最近色映射时也会按校准后的 RGB 计算，屏幕预览和实物更接近。
+
 ## 缩略图缓存（0.6.3）
 
 - 库页缩略图不再每帧重画所有格子：`data/PatternThumbCache.kt` 按「尺寸 + 色板 + cells 内容哈希」渲染一次 256px 位图，内存 LruCache（8MB）+ `filesDir/thumbs/<id>-<尺寸>-<色板>-<哈希>.png` 双缓存，之后滚动直接贴图。
@@ -209,7 +217,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-run.ps1 -Sho
 
 - 数据：[HansBug/pindou-color-data](https://github.com/HansBug/pindou-color-data)，MIT License，Copyright (c) 2026 HansBug。
 - 内置 MARD 221（基础卡）与 MARD 291（完整卡）；`scripts/build-palette-assets.py` 把它们压成 `{code, hex, g}` 的紧凑 JSON。
-- 重要：JSON 里的 HEX 是**屏幕参考值**，不等于实物豆子颜色（受材质、批次、透明度影响）。以实物色卡为准；后续版本会在编辑器里提供长按校准。
+- 重要：JSON 里的 HEX 是**屏幕参考值**，不等于实物豆子颜色（受材质、批次、透明度影响）。以实物色卡为准；对不上时可在色板页长按色块校准，校准值只存本机（`filesDir/palette_calibrated.json`），不改图纸数据。
 - 联网取数不通时的备用方式：`https://codeload.github.com/HansBug/pindou-color-data/tar.gz/refs/heads/main`（raw.githubusercontent.com 在本机 TLS 失败）。
 
 ## 已踩过的坑
@@ -236,7 +244,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-run.ps1 -Sho
 
 拼到一半发现白豆不够，是最常见的翻车点，所以有了这个。
 
-- **记录**：色板页**长按色块** → 填你手上有多少颗（`不追踪` 可以清掉）。色块下面会显示数量，0 显示红色的「缺」。
+- **记录**：色板页**长按色块** → 库存对话框里填你手上有多少颗（`不追踪` 可以清掉），同一个对话框也能进颜色校准。色块下面会显示数量，0 显示红色的「缺」。
 - **算缺口**：图纸详情页会自动比对——成本卡片里多一行红字「豆仓缺 1 色 / 共 72 颗（补货约 ¥1.44）」，色号明细里每个色号单独标「库存 100 · 缺 72」或「库存 500 · 够」。
 - **关键设计**：**没记过数量的色号不算缺口**（返回 `null` = 不追踪）。否则第一次打开任何图纸都会满屏「缺货」，功能就废了。
 - 数据存 `filesDir/inventory.json`，形如 `{"mard221":{"A19":100}}`；内部用 `SnapshotStateMap`，改完数量界面立刻刷新，不用手动重进。
