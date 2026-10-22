@@ -65,6 +65,26 @@ fun AppRoot() {
             onOpenPalette = { screen = Screen.Palette },
             onOpenAbout = { screen = Screen.About },
             onNewPattern = { screen = Screen.Import },
+            onNewBlank = { w, h ->
+                val now = System.currentTimeMillis()
+                val fresh = Pattern(
+                    id = Pattern.newId(),
+                    name = "空白 " + java.text.SimpleDateFormat(
+                        "MM-dd HH:mm",
+                        java.util.Locale.getDefault(),
+                    ).format(java.util.Date(now)),
+                    width = w,
+                    height = h,
+                    paletteId = store.current.id,
+                    cells = IntArray(w * h) { -1 },
+                    createdAt = now,
+                    updatedAt = now,
+                    done = mutableSetOf(),
+                )
+                PatternStore.save(context, fresh)
+                patterns.add(0, fresh)
+                screen = Screen.Editor(fresh.id)
+            },
             onRename = { p, name ->
                 val renamed = PatternStore.rename(context, p.id, name)
                 if (renamed != null) {

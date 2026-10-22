@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -250,6 +251,16 @@ fun PatternDetailScreen(
                 }
             }
 
+            item {
+                Button(
+                    onClick = onBuild,
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Text("开始施工", style = MaterialTheme.typography.titleMedium)
+                }
+            }
+
             if (undoPattern != null) {
                 item {
                     OutlinedButton(
@@ -290,8 +301,8 @@ fun PatternDetailScreen(
                     OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) {
                         Text("编辑")
                     }
-                    OutlinedButton(onClick = onBuild, modifier = Modifier.weight(1f)) {
-                        Text("施工")
+                    OutlinedButton(onClick = { showCanvas = true }, modifier = Modifier.weight(1f)) {
+                        Text("画布")
                     }
                 }
             }
@@ -301,9 +312,6 @@ fun PatternDetailScreen(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    OutlinedButton(onClick = { showCanvas = true }, modifier = Modifier.weight(1f)) {
-                        Text("画布")
-                    }
                     OutlinedButton(
                         onClick = {
                             if (exporting) return@OutlinedButton

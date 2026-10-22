@@ -16,14 +16,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -37,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.pindou.app.data.Palette
 import com.pindou.app.data.Pattern
@@ -55,12 +60,16 @@ fun LibraryScreen(
     onOpenPalette: () -> Unit,
     onOpenAbout: () -> Unit,
     onNewPattern: () -> Unit,
+    onNewBlank: (Int, Int) -> Unit = { _, _ -> },
     onRename: (Pattern, String) -> Unit = { _, _ -> },
     onDuplicate: (Pattern) -> Unit = {},
     onDelete: (Pattern) -> Unit = {},
 ) {
     var renameTarget by remember { mutableStateOf<Pattern?>(null) }
     var deleteTarget by remember { mutableStateOf<Pattern?>(null) }
+    var showBlank by remember { mutableStateOf(false) }
+    var blankW by remember { mutableStateOf("29") }
+    var blankH by remember { mutableStateOf("29") }
 
     Scaffold(
         topBar = {
@@ -96,8 +105,21 @@ fun LibraryScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onNewPattern) {
-                Text("＋", style = MaterialTheme.typography.headlineSmall)
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                ExtendedFloatingActionButton(
+                    onClick = { showBlank = true },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    text = { Text("空白画布") },
+                    icon = {},
+                )
+                ExtendedFloatingActionButton(
+                    onClick = onNewPattern,
+                    text = { Text("图片转图纸") },
+                    icon = {},
+                )
             }
         },
     ) { inner ->
@@ -110,7 +132,7 @@ fun LibraryScreen(
                     Text("还没有图纸", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = "点右下角「＋」，把图片转成图纸。\n也可以先到「色板」里勾掉你手上没有的色号，出图就只用你有的豆子。",
+                        text = "点右下角「图片转图纸」把照片转成图纸，或者用「空白画布」从零开始画。\n也可以先到「色板」里勾掉你手上没有的色号，出图就只用你有的豆子。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -173,6 +195,75 @@ fun LibraryScreen(
                 }) { Text("删除") }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } },
+        )
+    }
+
+    if (showBlank) {
+        val w = blankW.toIntOrNull() ?: 0
+        val h = blankH.toIntOrNull() ?: 0
+        val valid = w in 4..200 && h in 4..200
+        AlertDialog(
+            onDismissRequest = { showBlank = false },
+            title = { Text("新建空白画布") },
+            text = {
+                Column {
+                    Text(
+                        text = "按格子数填。29 是一块标准拼豆板，57 是两块拼起来。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = blankW,
+                            onValueChange = { blankW = it.filter { c -> c.isDigit() }.take(3) },
+                            label = { Text("宽（格）") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                        OutlinedTextField(
+                            value = blankH,
+                            onValueChange = { blankH = it.filter { c -> c.isDigit() }.take(3) },
+                            label = { Text("高（格）") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(29 to 29, 57 to 57, 29 to 57).forEach { (pw, ph) ->
+                            OutlinedButton(
+                                onClick = { blankW = "$pw"; blankH = "$ph" },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            ) {
+                                Text("$pw×$ph", maxLines = 1)
+                            }
+                        }
+                    }
+                    if (!valid) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "宽高要在 4 到 200 之间",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (valid) {
+                            showBlank = false
+                            onNewBlank(w, h)
+                        }
+                    },
+                    enabled = valid,
+                ) { Text("创建") }
+            },
+            dismissButton = { TextButton(onClick = { showBlank = false }) { Text("取消") } },
         )
     }
 }
