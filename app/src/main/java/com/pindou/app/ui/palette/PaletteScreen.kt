@@ -1,5 +1,9 @@
 package com.pindou.app.ui.palette
 
+import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +31,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,10 +41,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextDecoration
@@ -46,10 +54,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pindou.app.data.BeadColor
 import com.pindou.app.data.HexColor
+import com.pindou.app.data.InventoryCsv
 import com.pindou.app.data.PaletteId
 import com.pindou.app.data.PaletteGroups
 import com.pindou.app.data.InventoryStore
 import com.pindou.app.data.PaletteStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
 
 /**
  * 色板页：切换 MARD 221 / 291，按色系筛，点色块切换「我有 / 没有」。
@@ -58,13 +76,43 @@ import com.pindou.app.data.PaletteStore
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
     val palette = store.current
     var group by remember(palette.id) { mutableStateOf<String?>(null) }
     var editColor by remember { mutableStateOf<BeadColor?>(null) }
     var editCount by remember { mutableStateOf("") }
     var calibrateColor by remember { mutableStateOf<BeadColor?>(null) }
     var calibrateText by remember { mutableStateOf("") }
+    var readingCsv by remember { mutableStateOf(false) }
+    var importPreview by remember { mutableStateOf<InventoryCsv.Parsed?>(null) }
     val shown = if (group == null) palette.colors else palette.colors.filter { it.group == group }
+
+    val csvPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        readingCsv = true
+        scope.launch {
+            val targetPalette = palette
+            val parsed = withContext(Dispatchers.IO) {
+                try {
+                    InventoryCsv.parse(readCsvText(context, uri), targetPalette)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    InventoryCsv.Parsed(error = "读取失败：${e.message ?: "格式不支持"}")
+                }
+            }
+            readingCsv = false
+            when {
+                parsed.error != null -> snackbar.showSnackbar(parsed.error)
+                parsed.counts.isEmpty() -> snackbar.showSnackbar(
+                    "没有可导入的库存：检查色号是否属于 ${targetPalette.title}、库存列是否为空",
+                )
+                else -> importPreview = parsed
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -96,6 +144,7 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { inner ->
         Column(Modifier.fillMaxSize().padding(inner)) {
             Row(
@@ -143,6 +192,28 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
 
             Spacer(Modifier.height(4.dp))
 
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "没有逐色记库存？",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = {
+                        csvPicker.launch(
+                            arrayOf("text/*", "application/csv", "application/octet-stream"),
+                        )
+                    },
+                    enabled = !readingCsv,
+                ) {
+                    Text(if (readingCsv) "读取中…" else "批量导入 CSV")
+                }
+            }
+
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(64.dp),
                 contentPadding = PaddingValues(12.dp),
@@ -189,6 +260,59 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
                 editColor = null
                 calibrateColor = target
                 calibrateText = target.hex.removePrefix("#")
+            },
+        )
+    }
+
+    val preview = importPreview
+    if (preview != null) {
+        AlertDialog(
+            onDismissRequest = { importPreview = null },
+            title = { Text("导入库存") },
+            text = {
+                Column {
+                    Text(
+                        "识别 ${preview.totalRows} 行，可更新 ${preview.counts.size} 个色号。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (preview.unknown.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "跳过 ${preview.unknown.size} 个不属于当前色板的色号：" +
+                                preview.unknown.take(6).joinToString("、") +
+                                if (preview.unknown.size > 6) " 等" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (preview.invalidRows > 0) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "跳过 ${preview.invalidRows} 行数量无效的数据",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "只更新文件里出现且数量非空的色号；未提到的色号保持原样。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        inventory.setAll(palette.id, preview.counts)
+                        val count = preview.counts.size
+                        importPreview = null
+                        scope.launch { snackbar.showSnackbar("已导入 $count 个色号的库存") }
+                    },
+                ) { Text("导入 ${preview.counts.size} 个") }
+            },
+            dismissButton = {
+                TextButton(onClick = { importPreview = null }) { Text("取消") }
             },
         )
     }
@@ -395,5 +519,33 @@ private fun ColorCell(
             },
             modifier = Modifier.height(13.dp),
         )
+    }
+}
+
+private const val MAX_CSV_BYTES = 2 * 1024 * 1024
+
+/** 读库存 CSV：限 2 MB；先按 UTF-8 严格解，失败再按 GB18030（中文 Excel 常见）。 */
+private fun readCsvText(context: Context, uri: Uri): String {
+    val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+        val out = ByteArrayOutputStream()
+        val chunk = ByteArray(8192)
+        var total = 0
+        while (true) {
+            val n = input.read(chunk)
+            if (n < 0) break
+            total += n
+            if (total > MAX_CSV_BYTES) throw IllegalArgumentException("文件超过 2 MB")
+            out.write(chunk, 0, n)
+        }
+        out.toByteArray()
+    } ?: throw IllegalArgumentException("打不开文件")
+    return runCatching {
+        StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(bytes))
+            .toString()
+    }.getOrElse {
+        String(bytes, Charset.forName("GB18030"))
     }
 }

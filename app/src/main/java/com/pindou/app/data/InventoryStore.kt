@@ -56,6 +56,15 @@ class InventoryStore(private val context: Context) {
         persist()
     }
 
+    /** 批量导入：一次更新多个色号，只落盘一次。 */
+    fun setAll(paletteId: String, values: Map<String, Int>) {
+        if (values.isEmpty()) return
+        for ((code, count) in values) {
+            counts["$paletteId|$code"] = count.coerceAtLeast(0)
+        }
+        persist()
+    }
+
     private fun persist() {
         val root = JSONObject()
         for ((key, value) in counts) {
