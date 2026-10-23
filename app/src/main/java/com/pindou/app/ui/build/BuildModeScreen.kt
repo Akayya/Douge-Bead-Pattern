@@ -60,6 +60,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.pindou.app.data.BoardLayout
 import com.pindou.app.data.DeductionStore
 import com.pindou.app.data.InventoryDeduction
 import com.pindou.app.data.InventoryStore
@@ -75,6 +76,7 @@ private enum class BuildView(val label: String) {
     All("全部"),
     ByColor("逐色"),
     ByRow("逐行"),
+    Board("按板"),
 }
 
 private const val MAX_ZOOM = 6f
@@ -109,6 +111,8 @@ fun BuildModeScreen(
     var scale by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var jumpTick by remember { mutableIntStateOf(0) }
+    var boardSpan by remember { mutableIntStateOf(29) }
+    var focusTick by remember { mutableIntStateOf(0) }
 
     var deducted by remember(pattern.id) { mutableStateOf(deductions.isDeducted(pattern.id)) }
     var showDeductDialog by remember(pattern.id) { mutableStateOf(false) }
@@ -145,6 +149,54 @@ fun BuildModeScreen(
     val remainMinutes = ((total - finished) / 100f * minutesPer100).roundToInt()
     val complete = total > 0 && finished == total
 
+    val boardCount = BoardLayout.count(pattern.width, pattern.height, boardSpan)
+    val currentBoard = if (view == BuildView.Board) {
+        highlight.coerceIn(0, (boardCount - 1).coerceAtLeast(0))
+    } else {
+        -1
+    }
+    val boardBounds = if (currentBoard >= 0) {
+        BoardLayout.bounds(currentBoard, pattern.width, pattern.height, boardSpan)
+    } else {
+        null
+    }
+
+    fun countInBoard(bounds: BoardLayout.Bounds?, onlyDone: Boolean): Int {
+        if (bounds == null) return 0
+        var n = 0
+        for (y in bounds.row0 until bounds.row0 + bounds.height) {
+            val base = y * pattern.width
+            for (x in bounds.col0 until bounds.col0 + bounds.width) {
+                val idx = base + x
+                if (pattern.cells[idx] >= 0 && (!onlyDone || idx in done)) n++
+            }
+        }
+        return n
+    }
+
+    val boardTotal = countInBoard(boardBounds, onlyDone = false)
+    val boardDone = countInBoard(boardBounds, onlyDone = true)
+
+    fun focusBoard(index: Int) {
+        // 手势/点击回调里不能读组合期缓存的 val，板数会停在上一次重组时的值
+        val count = BoardLayout.count(pattern.width, pattern.height, boardSpan)
+        if (count <= 0) return
+        highlight = index.coerceIn(0, count - 1)
+        status = ""
+        focusTick++
+    }
+
+    fun selectSpan(span: Int) {
+        val normalized = BoardLayout.normalizeSpan(span)
+        if (normalized == boardSpan) return
+        val firstBead = pattern.cells.indexOfFirst { it >= 0 }.takeIf { it >= 0 } ?: 0
+        val anchor = if (cursor in pattern.cells.indices) cursor else firstBead
+        boardSpan = normalized
+        highlight = BoardLayout.indexAt(anchor, pattern.width, normalized)
+        status = ""
+        focusTick++
+    }
+
     fun deductionPlan(): InventoryDeduction.Plan =
         InventoryDeduction.plan(usage) { code -> inventory.count(pattern.paletteId, code) }
 
@@ -180,15 +232,24 @@ fun BuildModeScreen(
     }
 
     // 注意：这里必须每次现算，不能提前存成 val——手势 lambda 只在首帧创建一次，
-    // 存 val 会让「逐色/逐行」的筛选条件永远停在初始值（切视图后照样能点别的格子）。
+    // 存 val 会让「逐色/逐行/按板」的筛选条件永远停在初始值（切视图后照样能点别的格子）。
     fun groupColor(): Int = if (view == BuildView.ByColor) highlight else -1
     fun groupRow(): Int = if (view == BuildView.ByRow) highlight else -1
+    fun groupBoard(): Int = if (view == BuildView.Board) {
+        val count = BoardLayout.count(pattern.width, pattern.height, boardSpan)
+        highlight.coerceIn(0, (count - 1).coerceAtLeast(0))
+    } else {
+        -1
+    }
 
     fun inGroup(idx: Int): Boolean {
         val v = pattern.cells.getOrNull(idx) ?: -1
         val gc = groupColor()
         val gr = groupRow()
-        return (gc < 0 || v == gc) && (gr < 0 || idx / pattern.width == gr)
+        val gb = groupBoard()
+        return (gc < 0 || v == gc) &&
+            (gr < 0 || idx / pattern.width == gr) &&
+            (gb < 0 || BoardLayout.indexAt(idx, pattern.width, boardSpan) == gb)
     }
 
     fun toggle(idx: Int) {
@@ -197,9 +258,11 @@ fun BuildModeScreen(
         if (!inGroup(idx)) {
             val gc = groupColor()
             val gr = groupRow()
+            val gb = groupBoard()
             status = when {
                 gc >= 0 -> "逐色视图：只能勾 ${palette.get(gc)?.code ?: "这个色"} 的格子"
                 gr >= 0 -> "逐行视图：只能勾第 ${gr + 1} 行的格子"
+                gb >= 0 -> "按板视图：只能勾第 ${gb + 1} 板的格子"
                 else -> "这个格子不在当前视图里"
             }
             return
@@ -239,9 +302,11 @@ fun BuildModeScreen(
         val rowOf = idx / pattern.width
         val gc = groupColor()
         val gr = groupRow()
+        val gb = groupBoard()
         val targets = when {
             gc >= 0 -> done.filter { pattern.cells[it] == gc }
             gr >= 0 -> done.filter { it / pattern.width == gr }
+            gb >= 0 -> done.filter { BoardLayout.indexAt(it, pattern.width, boardSpan) == gb }
             else -> done.filter { it / pattern.width == rowOf }
         }
         if (targets.isEmpty()) {
@@ -278,11 +343,13 @@ fun BuildModeScreen(
                 highlight = r
             }
             BuildView.ByColor -> highlight = pattern.cells[found]
+            BuildView.Board -> highlight = BoardLayout.indexAt(found, pattern.width, boardSpan)
             BuildView.All -> Unit
         }
         val code = palette.get(pattern.cells[found])?.code ?: ""
-        status = "下一处：第 ${r + 1} 行 · 第 ${c + 1} 列 · $code"
-        jumpTick++
+        val boardText = if (view == BuildView.Board) "第 ${highlight + 1} 板 · " else ""
+        status = "下一处：${boardText}第 ${r + 1} 行 · 第 ${c + 1} 列 · $code"
+        if (view == BuildView.Board) focusTick++ else jumpTick++
     }
 
     if (showDeductDialog && deduction != null) {
@@ -384,8 +451,16 @@ fun BuildModeScreen(
                                 BuildView.All -> -1
                                 BuildView.ByColor -> usage.firstOrNull()?.let { palette.indexOf(it.color.code) } ?: -1
                                 BuildView.ByRow -> row
+                                BuildView.Board -> BoardLayout.indexAt(
+                                    cursor.takeIf { it in pattern.cells.indices }
+                                        ?: pattern.cells.indexOfFirst { it >= 0 && it !in done }.takeIf { it >= 0 }
+                                        ?: 0,
+                                    pattern.width,
+                                    boardSpan,
+                                )
                             }
                             status = ""
+                            if (v == BuildView.Board) focusTick++
                         },
                         label = { Text(v.label) },
                     )
@@ -493,6 +568,49 @@ fun BuildModeScreen(
                         row = (row + 1).coerceAtMost(pattern.height - 1)
                         highlight = row
                     }) { Text("下一行 ›") }
+                }
+            }
+
+            if (view == BuildView.Board) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TextButton(
+                        onClick = { focusBoard(currentBoard - 1) },
+                        enabled = currentBoard > 0,
+                    ) { Text("‹ 上一板") }
+                    Text(
+                        "第 ${currentBoard + 1} / $boardCount 板",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(
+                        onClick = { focusBoard(currentBoard + 1) },
+                        enabled = currentBoard < boardCount - 1,
+                    ) { Text("下一板 ›") }
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "本板已勾 $boardDone / $boardTotal",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    FilterChip(
+                        selected = boardSpan == 29,
+                        onClick = { selectSpan(29) },
+                        label = { Text("29×29") },
+                    )
+                    FilterChip(
+                        selected = boardSpan == 58,
+                        onClick = { selectSpan(58) },
+                        label = { Text("58×58") },
+                    )
                 }
             }
 
@@ -608,6 +726,25 @@ fun BuildModeScreen(
                     )
                 }
 
+                // 按板视图：切板/换板尺寸时把当前板放大到画面中央
+                LaunchedEffect(focusTick) {
+                    if (focusTick == 0 || view != BuildView.Board) return@LaunchedEffect
+                    val b = boardBounds ?: return@LaunchedEffect
+                    val boardW = b.width * cell
+                    val boardH = b.height * cell
+                    if (boardW <= 0f || boardH <= 0f) return@LaunchedEffect
+                    val ns = (minOf(boxW / boardW, boxH / boardH) * 0.82f).coerceIn(1f, MAX_ZOOM)
+                    val cx = ox + (b.col0 + b.width / 2f) * cell
+                    val cy = oy + (b.row0 + b.height / 2f) * cell
+                    val maxX = (boxW * (ns - 1f)) / 2f
+                    val maxY = (boxH * (ns - 1f)) / 2f
+                    scale = ns
+                    pan = Offset(
+                        (-(cx - pivot.x) * ns).coerceIn(-maxX, maxX),
+                        (-(cy - pivot.y) * ns).coerceIn(-maxY, maxY),
+                    )
+                }
+
                 Canvas(
                     Modifier
                         .fillMaxSize()
@@ -707,7 +844,7 @@ fun BuildModeScreen(
                                 )
                             }
                             val boardColor = Color(0x774A4A55)
-                            var bx = 29
+                            var bx = boardSpan
                             while (bx < pattern.width) {
                                 drawLine(
                                     boardColor,
@@ -715,9 +852,9 @@ fun BuildModeScreen(
                                     Offset(ox + bx * cell, oy + pattern.height * cell),
                                     (cell * 0.14f).coerceAtLeast(1.5f) / scale,
                                 )
-                                bx += 29
+                                bx += boardSpan
                             }
-                            var by = 29
+                            var by = boardSpan
                             while (by < pattern.height) {
                                 drawLine(
                                     boardColor,
@@ -725,8 +862,20 @@ fun BuildModeScreen(
                                     Offset(ox + pattern.width * cell, oy + by * cell),
                                     (cell * 0.14f).coerceAtLeast(1.5f) / scale,
                                 )
-                                by += 29
+                                by += boardSpan
                             }
+                        }
+
+                        if (view == BuildView.Board && boardBounds != null) {
+                            drawRect(
+                                color = Color(0xFF6C4BF4),
+                                topLeft = Offset(
+                                    ox + boardBounds.col0 * cell,
+                                    oy + boardBounds.row0 * cell,
+                                ),
+                                size = Size(boardBounds.width * cell, boardBounds.height * cell),
+                                style = Stroke(width = (cell * 0.16f).coerceAtLeast(2f) / scale),
+                            )
                         }
 
                         if (cursor in 0 until pattern.width * pattern.height) {
@@ -779,12 +928,11 @@ fun BuildModeScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (view == BuildView.All) {
-                        "点格子打勾，长按清这一行的勾 · 双指缩放"
-                    } else if (view == BuildView.ByColor) {
-                        "只勾当前颜色，长按清这个颜色的勾 · 双指缩放"
-                    } else {
-                        "只勾当前行，长按清这一行的勾 · 双指缩放"
+                    text = when (view) {
+                        BuildView.All -> "点格子打勾，长按清这一行的勾 · 双指缩放"
+                        BuildView.ByColor -> "只勾当前颜色，长按清这个颜色的勾 · 双指缩放"
+                        BuildView.ByRow -> "只勾当前行，长按清这一行的勾 · 双指缩放"
+                        BuildView.Board -> "只勾当前板，长按清这一板的勾 · 双指缩放"
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
