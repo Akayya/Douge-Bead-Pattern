@@ -34,7 +34,6 @@ object BackupManager {
     private const val MAX_ENTRY_BYTES = 32L * 1024 * 1024
     private const val MAX_TOTAL_BYTES = 96L * 1024 * 1024
     private const val MAX_ENTRIES = 5000
-    private const val MAX_CELLS = 4_000_000
     private val PATTERN_NAME = Regex("^patterns/([A-Za-z0-9_-]{4,64})\\.json$")
     private val SETTINGS = listOf(
         "palette_state.json",
@@ -131,7 +130,7 @@ object BackupManager {
         for ((name, data) in entries) {
             val match = PATTERN_NAME.matchEntire(name) ?: continue
             val expectedId = match.groupValues[1]
-            val pattern = decodePattern(String(data, Charsets.UTF_8))
+            val pattern = PatternStore.deserialize(String(data, Charsets.UTF_8))
                 ?: throw BackupException("备份里的图纸「$expectedId」已损坏，未做任何修改")
             if (pattern.id != expectedId) {
                 throw BackupException("备份里的图纸编号不一致，未做任何修改")
@@ -353,48 +352,6 @@ object BackupManager {
         if (format != FORMAT) {
             throw BackupException("备份格式版本不支持（$format）")
         }
-    }
-
-    private fun decodePattern(text: String): Pattern? {
-        val root = runCatching { JSONObject(text) }.getOrNull() ?: return null
-        val id = root.optString("id", "")
-        if (!Regex("^[A-Za-z0-9_-]{4,64}$").matches(id)) return null
-        val width = root.optInt("w", 0)
-        val height = root.optInt("h", 0)
-        if (width <= 0 || height <= 0) return null
-        if (width.toLong() * height > MAX_CELLS) return null
-        val cellsJson = root.optJSONArray("cells") ?: return null
-        if (cellsJson.length() != width * height) return null
-        val cells = IntArray(width * height)
-        for (i in cells.indices) {
-            val value = cellsJson.optInt(i, -1)
-            if (value < -1 || value > 4096) return null
-            cells[i] = value
-        }
-        val done = HashSet<Int>()
-        val doneJson = root.optJSONArray("done")
-        if (doneJson != null) {
-            for (i in 0 until doneJson.length()) {
-                val value = doneJson.optInt(i, -1)
-                if (value in cells.indices && cells[value] >= 0) done.add(value)
-            }
-        }
-        val createdAt = root.optLong("createdAt", System.currentTimeMillis())
-        val paletteId = when (root.optString("paletteId", PaletteId.MARD_221)) {
-            PaletteId.MARD_291 -> PaletteId.MARD_291
-            else -> PaletteId.MARD_221
-        }
-        return Pattern(
-            id = id,
-            name = root.optString("name", "").ifBlank { "未命名图纸" },
-            width = width,
-            height = height,
-            paletteId = paletteId,
-            cells = cells,
-            createdAt = createdAt,
-            updatedAt = root.optLong("updatedAt", createdAt),
-            done = done,
-        )
     }
 
     private fun generateId(used: Set<String>): String {

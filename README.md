@@ -168,7 +168,7 @@
 
 ## 单元测试与去杂点修复（0.6.10）
 
-- 新增 JVM 单元测试（JUnit 4），`./gradlew.bat :app:testDebugUnitTest` 直接跑，不依赖模拟器；截至 0.6.18 是 13 个测试类共 64 个用例，覆盖 HEX 颜色解析、图纸裁剪/旋转/镜像、去杂点、减色、导出尺寸预算、施工进度、像素网格识别、材料单 CSV、PDF 分页、库存 CSV 导入、拼完扣减、29/58 板布局、快照保留策略。
+- 新增 JVM 单元测试（JUnit 4），`./gradlew.bat :app:testDebugUnitTest` 直接跑，不依赖模拟器；截至 0.6.19 是 14 个测试类共 71 个用例，覆盖 HEX 颜色解析、图纸裁剪/旋转/镜像、去杂点、减色、导出尺寸预算、施工进度、像素网格识别、材料单 CSV、PDF 分页、库存 CSV 导入、拼完扣减、29/58 板布局、快照保留策略、单图分享文件编解码与导入重命名。org.json 仅测试用，生产代码仍用 Android 自带实现。
 - 把 Android 依赖从纯逻辑里剥出来：新增 `HexColor`（替代 `android.graphics.Color.parseColor`），`PixelGridDetector.detect(IntArray, width, height)` 可脱离 `Bitmap` 测试；识别算法本身与重构前一致。
 - 顺手修了一个真 bug：去杂点用 `argb < 0` 判断「颜色无效」，而所有不透明色（`0xFF……`）在 Int 里都是负数，导致点「去杂点」永远提示「没有找到杂点」。现在改成可空数组判空；单测覆盖了近白噪点、两色混合过渡格，黑眼珠/线条端点仍会保留。
 - 工程目录名含中文时要注意编码：Gradle 给测试 worker 写的 `@argfile` 按 daemon 默认编码写、JVM 启动器按系统编码读。`gradle.properties` 因此用 `-Dfile.encoding=COMPAT`（跟随系统编码）；写死 UTF-8 会报 `ClassNotFoundException`。
@@ -244,6 +244,16 @@
 - 数据变更按文件修改时间判断；阈值与保留份数在 `data/SnapshotPolicy.kt`，有 JVM 用例覆盖。
 - 模拟器验证：9 张图纸启动自动生成 1 份；自动 1 份后再手动做 5 份，只保留最新 5 份；无改动重启不重复生成；删除临时图纸后快照包含 10 张，恢复后图纸与施工进度回到删除前（1/1743），再清理回 9 张；SAF 导出/覆盖导入回归通过，覆盖前新增安全快照且列表即时刷新。测试数据已删除，用户原 9 张图纸内容哈希与色板状态完全一致。
 
+## 单张图纸分享与导入（0.6.19）
+
+- 详情页「分享图纸文件」生成一个 `.json`，走系统分享面板；对方在图纸库顶栏点「导入」选这个文件，就能得到一张完整图纸（格子、施工进度、色板、色号一起带过去）。全程不走网络，也不申请存储权限。
+- 文件外层带来源信息（App 标记、格式版本、导出时的 App 版本、色板 ID、用到的色号与当时 HEX），内层沿用 `PatternStore` 的图纸 JSON；导入只接受 `app=douge`、`kind=pattern`、格式 1 的文件。
+- 导入一律生成新编号，绝不覆盖本地图纸；同名时依次存成「（导入）」「（导入） 2」……。文件里的色号下标超出本地色板、图纸损坏、格式不对都会被拒绝，并提示原因。
+- 如果来源图纸用到的色号颜色与本地不同（通常是双方校准不一致），导入后会弹框提示有几个色号有偏差，但不改图纸内容。
+- 库页缩略图与「N 色」统计改成按每张图纸自己的色板取色，混用 MARD 221/291 的库也不会把别的色板图纸显示成错误颜色。
+- 导入成功后列表自动滚到顶部，新副本按「最近更新」排在第一张。最初直接调 `scrollToItem(0)` 会被 LazyColumn 的旧 key 锚点抵消（实测导入后原图纸仍占第一屏），现改为等列表完成重组后再滚。
+- 模拟器验证：47×50 / 1743 颗 / 12 色、进度 1 格的图纸分享文件与源 JSON 的 cells/done/paletteId 完全一致；导入后得到新编号副本、重名自动加「（导入）」并滚到第一屏，格子与进度逐项相同；改一个颜色 HEX 再导入会提示「1 个色号颜色与本地不同」；`{}` 文件被拒；测试副本与下载目录文件已清理，用户原 9 张图纸哈希未变。微信/QQ 真机接收 `.json` 是否方便尚未验证。
+
 ## 缩略图缓存（0.6.3）
 
 - 库页缩略图不再每帧重画所有格子：`data/PatternThumbCache.kt` 按「尺寸 + 色板 + 色板颜色指纹 + cells 内容哈希」渲染一次 256px 位图，内存 LruCache（8MB）+ `filesDir/thumbs/<id>-<尺寸>-<色板>-<指纹>-<哈希>.png` 双缓存，之后滚动直接贴图。
@@ -258,7 +268,7 @@
 │  └─ src/main/
 │     ├─ java/com/pindou/app/
 │     │  ├─ MainActivity.kt
-│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复）、SnapshotPolicy（快照保留策略）、SnapshotStore（本地自动快照）、MaterialListCsv（材料单 CSV）、InventoryCsv（库存 CSV 批量导入）、InventoryDeduction（拼完扣减计算）、InventoryStore（豆仓数量）、DeductionStore（已扣标记）、BoardLayout（29/58 拼豆板行列与裁剪计算）、CostSettings（成本参数）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
+│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternFile（单图分享/导入）、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复）、SnapshotPolicy（快照保留策略）、SnapshotStore（本地自动快照）、MaterialListCsv（材料单 CSV）、InventoryCsv（库存 CSV 批量导入）、InventoryDeduction（拼完扣减计算）、InventoryStore（豆仓数量）、DeductionStore（已扣标记）、BoardLayout（29/58 拼豆板行列与裁剪计算）、CostSettings（成本参数）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
 │     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、about/（关于 + 数据备份 + 本地快照）、theme/
 │     ├─ assets/
 │     │  ├─ palette/        mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）

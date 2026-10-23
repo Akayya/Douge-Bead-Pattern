@@ -15,6 +15,7 @@ import com.pindou.app.data.Pattern
 import com.pindou.app.data.CostSettings
 import com.pindou.app.data.DeductionStore
 import com.pindou.app.data.InventoryStore
+import com.pindou.app.data.PatternFile
 import com.pindou.app.data.PatternStore
 import com.pindou.app.data.PatternThumbCache
 import com.pindou.app.data.SamplePatterns
@@ -80,6 +81,7 @@ fun AppRoot() {
             patterns = patterns,
             palette = store.current,
             paletteTitle = store.current.title,
+            paletteFor = { id -> store.palette(id) },
             onOpenPattern = { screen = Screen.Detail(it.id) },
             onOpenPalette = { screen = Screen.Palette },
             onOpenAbout = { screen = Screen.About },
@@ -139,6 +141,44 @@ fun AppRoot() {
             onRestore = { p ->
                 PatternStore.save(context, p)
                 if (patterns.none { it.id == p.id }) patterns.add(0, p)
+            },
+            onImportPattern = { uri ->
+                val usedIds = patterns.mapTo(HashSet()) { it.id }
+                val usedNames = patterns.mapTo(HashSet()) { it.name }
+                val outcome = try {
+                    val parsed = withContext(Dispatchers.IO) {
+                        PatternFile.parse(PatternFile.readText(context, uri))
+                    }
+                    val localPalette = store.palette(parsed.pattern.paletteId)
+                    withContext(Dispatchers.IO) {
+                        val unknown = PatternFile.unknownColorCount(parsed.pattern, localPalette)
+                        if (unknown > 0) {
+                            PatternFile.Outcome.Failure(
+                                "图纸里有 $unknown 个本地色板不存在的色号，无法导入",
+                            )
+                        } else {
+                            val prepared = PatternFile.prepareForImport(
+                                parsed.pattern,
+                                usedIds,
+                                usedNames,
+                            )
+                            PatternStore.save(context, prepared.pattern)
+                            PatternFile.Outcome.Success(
+                                pattern = prepared.pattern,
+                                mismatchedColors = PatternFile.mismatchedColorCount(
+                                    parsed,
+                                    localPalette,
+                                ),
+                            )
+                        }
+                    }
+                } catch (e: PatternFile.ImportException) {
+                    PatternFile.Outcome.Failure(e.message ?: "图纸文件无法读取")
+                } catch (e: Exception) {
+                    PatternFile.Outcome.Failure("导入失败：${e.message ?: "文件无法读取"}")
+                }
+                if (outcome is PatternFile.Outcome.Success) patterns.add(0, outcome.pattern)
+                outcome
             },
         )
 

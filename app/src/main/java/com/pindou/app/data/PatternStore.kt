@@ -12,6 +12,8 @@ import java.io.File
 object PatternStore {
 
     private const val VERSION = 1
+    private const val MAX_CELLS = 4_000_000
+    private val ID_PATTERN = Regex("^[A-Za-z0-9_-]{4,64}$")
 
     private fun dir(context: Context): File =
         File(context.filesDir, "patterns").apply { if (!exists()) mkdirs() }
@@ -45,6 +47,49 @@ object PatternStore {
         root.put("cells", JSONArray(pattern.cells.toList()))
         root.put("done", JSONArray(pattern.done.sorted()))
         return root.toString()
+    }
+
+    /** 解析外部来源（分享文件/备份）里的单张图纸；格式不合法返回 null。 */
+    fun deserialize(text: String): Pattern? {
+        val root = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        val id = root.optString("id", "")
+        if (!ID_PATTERN.matches(id)) return null
+        val width = root.optInt("w", 0)
+        val height = root.optInt("h", 0)
+        if (width <= 0 || height <= 0) return null
+        if (width.toLong() * height > MAX_CELLS) return null
+        val cellsJson = root.optJSONArray("cells") ?: return null
+        if (cellsJson.length() != width * height) return null
+        val cells = IntArray(width * height)
+        for (i in cells.indices) {
+            val value = cellsJson.optInt(i, -1)
+            if (value < -1 || value > 4096) return null
+            cells[i] = value
+        }
+        val done = HashSet<Int>()
+        val doneJson = root.optJSONArray("done")
+        if (doneJson != null) {
+            for (i in 0 until doneJson.length()) {
+                val value = doneJson.optInt(i, -1)
+                if (value in cells.indices && cells[value] >= 0) done.add(value)
+            }
+        }
+        val createdAt = root.optLong("createdAt", System.currentTimeMillis())
+        val paletteId = when (root.optString("paletteId", PaletteId.MARD_221)) {
+            PaletteId.MARD_291 -> PaletteId.MARD_291
+            else -> PaletteId.MARD_221
+        }
+        return Pattern(
+            id = id,
+            name = root.optString("name", "").ifBlank { "未命名图纸" },
+            width = width,
+            height = height,
+            paletteId = paletteId,
+            cells = cells,
+            createdAt = createdAt,
+            updatedAt = root.optLong("updatedAt", createdAt),
+            done = done,
+        )
     }
 
     fun delete(context: Context, id: String): Boolean = fileOf(context, id).delete()

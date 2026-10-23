@@ -61,6 +61,7 @@ import com.pindou.app.data.Palette
 import com.pindou.app.data.Pattern
 import com.pindou.app.data.PatternCleaner
 import com.pindou.app.data.PatternExporter
+import com.pindou.app.data.PatternFile
 import com.pindou.app.data.PatternPdf
 import com.pindou.app.data.PatternReducer
 import com.pindou.app.data.PatternTransform
@@ -100,6 +101,7 @@ fun PatternDetailScreen(
     var exportingCsv by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     var sharing by remember { mutableStateOf(false) }
+    var sharingFile by remember { mutableStateOf(false) }
     var reduceTo by remember { mutableFloatStateOf(6f) }
     var strength by remember { mutableStateOf(PatternCleaner.Strength.MEDIUM) }
     // 详情页的一次性操作（去杂点 / 减色 / 画布变换）都会覆盖原图，
@@ -411,6 +413,54 @@ fun PatternDetailScreen(
                     ) {
                         Text(if (sharing) "生成中…" else "分享 PNG")
                     }
+                }
+            }
+
+            item {
+                Column {
+                    OutlinedButton(
+                        onClick = {
+                            if (sharingFile) return@OutlinedButton
+                            sharingFile = true
+                            scope.launch {
+                                val uri = withContext(Dispatchers.IO) {
+                                    try {
+                                        PatternFile.share(context, current, palette)
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        null
+                                    }
+                                }
+                                sharingFile = false
+                                if (uri == null) {
+                                    snackbar.showSnackbar("分享失败，检查存储空间")
+                                    return@launch
+                                }
+                                val send = Intent(Intent.ACTION_SEND).apply {
+                                    type = PatternFile.MIME
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                val opened = runCatching {
+                                    context.startActivity(
+                                        Intent.createChooser(send, "分享图纸文件"),
+                                    )
+                                }.isSuccess
+                                if (!opened) snackbar.showSnackbar("没有可分享的应用")
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !sharingFile,
+                    ) {
+                        Text(if (sharingFile) "生成中…" else "分享图纸文件")
+                    }
+                    Text(
+                        "对方在豆格图纸库点「导入」即可打开，施工进度和色号一起带过去。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
             }
 

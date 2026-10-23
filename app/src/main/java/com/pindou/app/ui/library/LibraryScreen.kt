@@ -1,6 +1,9 @@
 package com.pindou.app.ui.library
 
 import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -56,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import com.pindou.app.data.Palette
 import com.pindou.app.data.Pattern
+import com.pindou.app.data.PatternFile
 import com.pindou.app.ui.PatternThumb
 import java.text.Collator
 import java.text.SimpleDateFormat
@@ -89,6 +93,7 @@ fun LibraryScreen(
     patterns: List<Pattern>,
     palette: Palette,
     paletteTitle: String,
+    paletteFor: (String) -> Palette = { palette },
     onOpenPattern: (Pattern) -> Unit,
     onOpenPalette: () -> Unit,
     onOpenAbout: () -> Unit,
@@ -98,6 +103,9 @@ fun LibraryScreen(
     onDuplicate: (Pattern) -> Unit = {},
     onDelete: suspend (Pattern) -> Boolean = { true },
     onRestore: (Pattern) -> Unit = {},
+    onImportPattern: suspend (Uri) -> PatternFile.Outcome = {
+        PatternFile.Outcome.Failure("导入功能不可用")
+    },
 ) {
     var renameTarget by remember { mutableStateOf<Pattern?>(null) }
     var deleteTarget by remember { mutableStateOf<Pattern?>(null) }
@@ -108,13 +116,49 @@ fun LibraryScreen(
     val context = LocalContext.current
     var sort by remember { mutableStateOf(readSort(context)) }
     var showSort by remember { mutableStateOf(false) }
+    var importing by remember { mutableStateOf(false) }
+    var importNotice by remember { mutableStateOf<String?>(null) }
+    var scrollTopAfterImport by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val collator = remember { Collator.getInstance(Locale.SIMPLIFIED_CHINESE) }
     val listState = rememberLazyListState()
 
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null || importing) return@rememberLauncherForActivityResult
+        importing = true
+        scope.launch {
+            val outcome = onImportPattern(uri)
+            importing = false
+            when (outcome) {
+                is PatternFile.Outcome.Success -> {
+                    scrollTopAfterImport = true
+                    val mismatches = outcome.mismatchedColors
+                    if (mismatches == 0) {
+                        snackbar.showSnackbar("已导入「${outcome.pattern.name}」")
+                    } else {
+                        importNotice = "已导入「${outcome.pattern.name}」。\n\n" +
+                            "来源图纸有 $mismatches 个色号的颜色与本地不同，" +
+                            "可能是色板校准差异，显示会有偏差。"
+                    }
+                }
+                is PatternFile.Outcome.Failure -> snackbar.showSnackbar(outcome.message)
+            }
+        }
+    }
+
     LaunchedEffect(sort, query) {
         listState.scrollToItem(0)
+    }
+
+    // 等新图纸进入列表并完成重组后再滚，直接滚会被旧的 key 锚点抵消
+    LaunchedEffect(scrollTopAfterImport, patterns.size) {
+        if (scrollTopAfterImport) {
+            listState.scrollToItem(0)
+            scrollTopAfterImport = false
+        }
     }
 
     // patterns 是 SnapshotStateList，直接在组合里算，增删改名后才会跟着刷新
@@ -154,6 +198,16 @@ fun LibraryScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
                             .clickable(onClick = onOpenAbout)
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                    )
+                    Text(
+                        text = if (importing) "导入中…" else "导入",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable(enabled = !importing) {
+                                importLauncher.launch(arrayOf("*/*"))
+                            }
                             .padding(horizontal = 8.dp, vertical = 8.dp),
                     )
                     Text(
@@ -301,7 +355,7 @@ fun LibraryScreen(
                         items(visible, key = { it.id }) { pattern ->
                             PatternRow(
                                 pattern = pattern,
-                                palette = palette,
+                                palette = paletteFor(pattern.paletteId),
                                 onClick = { onOpenPattern(pattern) },
                                 onRename = { renameTarget = pattern },
                                 onDuplicate = { onDuplicate(pattern) },
@@ -312,6 +366,17 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+
+    importNotice?.let { text ->
+        AlertDialog(
+            onDismissRequest = { importNotice = null },
+            title = { Text("导入完成") },
+            text = { Text(text) },
+            confirmButton = {
+                TextButton(onClick = { importNotice = null }) { Text("知道了") }
+            },
+        )
     }
 
     renameTarget?.let { target ->
