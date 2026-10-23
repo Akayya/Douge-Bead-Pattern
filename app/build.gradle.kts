@@ -11,8 +11,8 @@ android {
         applicationId = "com.pindou.app"
         minSdk = 31
         targetSdk = 37
-        versionCode = 16
-        versionName = "0.6.9"
+        versionCode = 17
+        versionName = "0.6.10"
     }
 
     buildFeatures {
@@ -43,4 +43,6 @@ dependencies {
     implementation("androidx.compose.ui:ui:1.12.1")
     implementation("androidx.compose.foundation:foundation:1.12.1")
     implementation("androidx.compose.material3:material3:1.4.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

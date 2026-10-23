@@ -44,7 +44,8 @@ object PatternCleaner {
             return Result(cells.copyOf(), 0, 0)
         }
         val slots = (cells.maxOrNull() ?: 0) + 1
-        val argb = IntArray(slots) { idx -> palette.get(idx)?.argb ?: -1 }
+        val argb = arrayOfNulls<Int>(slots)
+        for (idx in 0 until slots) argb[idx] = palette.get(idx)?.argb
         val freq = IntArray(slots)
         val touched = IntArray(8)
 
@@ -108,15 +109,13 @@ object PatternCleaner {
                     if (sameCount > strength.sameLimit) continue
                     if (filled < 5 || topCount < 5) continue
 
-                    val selfArgb = argb[self]
-                    val topArgb = argb[topColor]
-                    if (selfArgb < 0 || topArgb < 0) continue
+                    val selfArgb = argb[self] ?: continue
+                    val topArgb = argb[topColor] ?: continue
 
                     val dTop = distance(selfArgb, topArgb)
                     val isNoise = dTop < NEAR_SAME
-                    val isBlend = secondColor >= 0 && secondCount > 0 &&
-                        argb[secondColor] >= 0 &&
-                        blendsBetween(selfArgb, topArgb, argb[secondColor])
+                    val secondArgb = if (secondColor >= 0 && secondCount > 0) argb[secondColor] else null
+                    val isBlend = secondArgb != null && blendsBetween(selfArgb, topArgb, secondArgb)
                     if (!isNoise && !isBlend) continue
 
                     next[i] = topColor

@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pindou.app.data.BeadColor
+import com.pindou.app.data.HexColor
 import com.pindou.app.data.PaletteId
 import com.pindou.app.data.PaletteGroups
 import com.pindou.app.data.InventoryStore
@@ -187,7 +188,7 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
 
     val calibrating = calibrateColor
     if (calibrating != null) {
-        val normalized = PaletteStore.normalizeHex(calibrateText)
+        val normalized = HexColor.normalize(calibrateText)
         val previewArgb = normalized?.let {
             runCatching { android.graphics.Color.parseColor(it) }.getOrNull()
         }

@@ -44,15 +44,23 @@ object PixelGridDetector {
 
     fun detect(source: Bitmap, crop: RectF): Grid? {
         val region = ImageToPattern.cropBitmap(source, crop) ?: return null
-        val w = region.width
-        val h = region.height
-        if (w < 24 || h < 24) {
+        try {
+            val w = region.width
+            val h = region.height
+            if (w < 24 || h < 24) return null
+            val pixels = IntArray(w * h)
+            region.getPixels(pixels, 0, w, 0, 0, w, h)
+            return detect(pixels, w, h)
+        } finally {
             if (region !== source) region.recycle()
-            return null
         }
-        val pixels = IntArray(w * h)
-        region.getPixels(pixels, 0, w, 0, 0, w, h)
-        if (region !== source) region.recycle()
+    }
+
+    /** 纯算法入口，方便用合成像素阵列做 JVM 单测。 */
+    internal fun detect(pixels: IntArray, width: Int, height: Int): Grid? {
+        if (width < 24 || height < 24 || pixels.size < width * height) return null
+        val w = width
+        val h = height
 
         // 灰度
         val gray = FloatArray(w * h)

@@ -14,7 +14,7 @@ data class BeadColor(
     val hex: String,
     val group: String,
 ) {
-    val argb: Int = android.graphics.Color.parseColor(hex)
+    val argb: Int = HexColor.parseArgb(hex)
 }
 
 /** 一套色板（MARD 221 基础卡 / MARD 291 完整卡）。colors 的下标就是图纸格子里的存储值。 */
@@ -210,12 +210,4 @@ class PaletteStore(private val context: Context) {
         if (calibrationFile.exists()) JSONObject(calibrationFile.readText()) else JSONObject()
     }.getOrElse { JSONObject() }
 
-    companion object {
-        private val HEX = Regex("[0-9a-fA-F]{6}")
-
-        fun normalizeHex(raw: String): String? {
-            val body = raw.trim().removePrefix("#")
-            return if (HEX.matches(body)) "#${body.uppercase()}" else null
-        }
-    }
 }
