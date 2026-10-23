@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.pindou.app.data.PaletteStore
@@ -24,6 +25,7 @@ import com.pindou.app.ui.library.LibraryScreen
 import com.pindou.app.ui.palette.PaletteScreen
 import com.pindou.app.ui.pattern.PatternDetailScreen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private sealed interface Screen {
@@ -44,6 +46,7 @@ fun AppRoot() {
     val cost = remember { CostSettings(context) }
     val patterns = remember { mutableStateListOf<Pattern>() }
     var screen by remember { mutableStateOf<Screen>(Screen.Library) }
+    val appScope = rememberCoroutineScope()
 
     // 系统返回键在子页面里要能退回图纸库，而不是直接退出 App
     BackHandler(enabled = screen != Screen.Library) { screen = Screen.Library }
@@ -133,7 +136,20 @@ fun AppRoot() {
 
         Screen.Palette -> PaletteScreen(store = store, inventory = inventory, onBack = { screen = Screen.Library })
 
-        Screen.About -> AboutScreen(onBack = { screen = Screen.Library })
+        Screen.About -> AboutScreen(
+            onBack = { screen = Screen.Library },
+            patternCount = patterns.size,
+            onBackupImported = {
+                store.reload()
+                inventory.reload()
+                cost.reload()
+                appScope.launch {
+                    val loaded = withContext(Dispatchers.IO) { PatternStore.list(context) }
+                    patterns.clear()
+                    patterns.addAll(loaded)
+                }
+            },
+        )
 
         is Screen.Editor -> {
             val pattern = patterns.firstOrNull { it.id == current.id }

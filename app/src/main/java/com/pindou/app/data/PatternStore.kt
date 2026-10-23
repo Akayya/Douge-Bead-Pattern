@@ -28,6 +28,11 @@ object PatternStore {
         fileOf(context, id).takeIf { it.exists() }?.let { runCatching { read(it) }.getOrNull() }
 
     fun save(context: Context, pattern: Pattern) {
+        fileOf(context, pattern.id).writeText(serialize(pattern))
+    }
+
+    /** 备份导入时先写到临时目录，校验全部通过后再整体替换。 */
+    fun serialize(pattern: Pattern): String {
         val root = JSONObject()
         root.put("v", VERSION)
         root.put("id", pattern.id)
@@ -39,7 +44,7 @@ object PatternStore {
         root.put("updatedAt", pattern.updatedAt)
         root.put("cells", JSONArray(pattern.cells.toList()))
         root.put("done", JSONArray(pattern.done.sorted()))
-        fileOf(context, pattern.id).writeText(root.toString())
+        return root.toString()
     }
 
     fun delete(context: Context, id: String): Boolean = fileOf(context, id).delete()

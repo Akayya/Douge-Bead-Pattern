@@ -14,10 +14,17 @@ import java.io.File
 class CostSettings(context: Context) {
 
     private val file = File(context.filesDir, "cost.json")
-    private val json: JSONObject = runCatching { JSONObject(file.readText()) }.getOrElse { JSONObject() }
+    private var json: JSONObject = runCatching { JSONObject(file.readText()) }.getOrElse { JSONObject() }
 
     var pricePerBead by mutableFloatStateOf(json.optDouble("pricePerBead", 0.02).toFloat())
     var minutesPer100 by mutableFloatStateOf(json.optDouble("minutesPer100", 5.0).toFloat())
+
+    /** 备份恢复后重新读取 cost.json。 */
+    fun reload() {
+        json = runCatching { JSONObject(file.readText()) }.getOrElse { JSONObject() }
+        pricePerBead = json.optDouble("pricePerBead", 0.02).toFloat()
+        minutesPer100 = json.optDouble("minutesPer100", 5.0).toFloat()
+    }
 
     fun priceOf(count: Int): Float = count * pricePerBead
 

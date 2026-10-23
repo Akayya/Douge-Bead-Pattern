@@ -77,6 +77,12 @@ object PatternThumbCache {
         dir(context).listFiles { f -> f.isFile && f.name.startsWith("$id-") }?.forEach { it.delete() }
     }
 
+    /** 整库恢复会换掉图纸内容和色板校准，缩略图全部作废。 */
+    fun clearAll(context: Context) {
+        memory.evictAll()
+        dir(context).listFiles { f -> f.isFile }?.forEach { it.delete() }
+    }
+
     private fun render(pattern: Pattern, palette: Palette): Bitmap {
         val bitmap = Bitmap.createBitmap(SIDE, SIDE, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)

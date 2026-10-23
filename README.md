@@ -179,6 +179,15 @@
 - 缩略图缓存 key 加入 `Palette.colorsFingerprint`（色号 + HEX 的 FNV-1a 64 位指纹）。校准/恢复默认不再调用 `PatternThumbCache.clear(context)` 把所有缩略图一次性删掉并清空内存，而是让旧 key 自然失效、图纸显示时再懒重建；同一张图纸的旧指纹文件在下次渲染时按 `<id>-` 前缀清掉。
 - 库页排序方式写入 SharedPreferences（`library_prefs`，键 `sort`），重启后保持上次选择；搜索关键词仍然只在本次会话里，重启清空。
 
+## 整库备份与恢复（0.6.12）
+
+- 入口：关于页「数据备份」卡片。导出/导入都走系统文件选择器（SAF），不申请存储权限，也不联网。
+- 备份是一个 zip：`manifest.json`（App 标记、格式版本、导出时间、图纸数）+ `patterns/<id>.json` + `palette_state.json` + `palette_calibrated.json` + `inventory.json` + `cost.json`。图纸 JSON 原样写入，施工进度一起带走；缩略图缓存不备份，恢复后按需重建。
+- **合并导入**：现有图纸和设置都不删。备份里与本地同编号的图纸另存副本（名称加「（导入）」）；库存和颜色校准只补本地没记过的色号；色板开关与成本参数只在本地没有对应文件时采用备份值。
+- **覆盖恢复**：先完整校验 zip（清单、图纸 JSON、单元格数量、文件大小/数量上限），确认后把图纸目录整体换掉，再替换设置文件；会清空缩略图缓存。执行前二次确认，提示当前图纸数且不可撤销，建议先导出当前数据。
+- 安全边界：只接受 `patterns/<id>.json` 这种文件名，目录穿越条目直接拒绝；损坏的图纸或设置会让整次导入中止，不做“跳过坏文件继续导入”的半套恢复。
+- 模拟器验证：9 张图纸导出后与 App 内 JSON 逐字节一致；同库合并得到 17 张（8 张副本 + 1 张恢复），校准/库存只补缺失项、成本与色板开关保持本地；覆盖后图纸回到 9 张、设置全部还原、缩略图 7 张按需重建；损坏 zip 被拒绝且数据不变。真机 SAF 面板尚未验证。
+
 ## 缩略图缓存（0.6.3）
 
 - 库页缩略图不再每帧重画所有格子：`data/PatternThumbCache.kt` 按「尺寸 + 色板 + 色板颜色指纹 + cells 内容哈希」渲染一次 256px 位图，内存 LruCache（8MB）+ `filesDir/thumbs/<id>-<尺寸>-<色板>-<指纹>-<哈希>.png` 双缓存，之后滚动直接贴图。
@@ -193,8 +202,8 @@
 │  └─ src/main/
 │     ├─ java/com/pindou/app/
 │     │  ├─ MainActivity.kt
-│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternThumbCache（缩略图缓存）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
-│     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、theme/
+│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
+│     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、about/（关于 + 数据备份）、theme/
 │     ├─ assets/
 │     │  ├─ palette/        mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）
 │     │  ├─ support/        赞助二维码：alipay.png、wechat.png（自己放，见该目录 README.txt）

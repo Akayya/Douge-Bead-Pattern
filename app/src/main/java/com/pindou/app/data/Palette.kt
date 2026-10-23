@@ -179,7 +179,19 @@ class PaletteStore(private val context: Context) {
     fun calibratedHex(code: String): String? =
         calibration.optJSONObject(current.id)?.optString(code)?.takeIf { it.isNotEmpty() }
 
-    private fun activeId(): String = state.optString("active", PaletteId.MARD_221)
+    /** 备份恢复后重新读取状态文件；缓存的调色板要一起丢掉，否则校准不生效。 */
+    fun reload() {
+        state = readState()
+        calibration = readCalibration()
+        cache.clear()
+        current = loadPalette(activeId())
+        disabled = readDisabled(current.id)
+    }
+
+    private fun activeId(): String =
+        state.optString("active", PaletteId.MARD_221).let {
+            if (it == PaletteId.MARD_291) PaletteId.MARD_291 else PaletteId.MARD_221
+        }
 
     private fun basePalette(id: String): Palette = baseCache.getOrPut(id) {
         when (id) {

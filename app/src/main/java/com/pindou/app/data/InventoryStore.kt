@@ -26,6 +26,12 @@ class InventoryStore(private val context: Context) {
     private val counts: SnapshotStateMap<String, Int> = mutableStateMapOf()
 
     init {
+        reload()
+    }
+
+    /** 备份恢复后重新读取 inventory.json。 */
+    fun reload() {
+        counts.clear()
         runCatching {
             val root = JSONObject(file.readText())
             for (paletteId in root.keys()) {
