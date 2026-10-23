@@ -15,7 +15,7 @@
 | M1 | 工程骨架 + 图纸库 + MARD 221/291 色板（含「我有/没有」库存开关） | ✅ 已完成，模拟器验证通过 |
 | M2 | 图片转图纸（选图 / 裁剪 / 原图网格识别 / 色数限制 / 最近色映射） | ✅ 已完成，模拟器验证通过 |
 | M3 | 去杂点 + 框选裁剪 + 图形边界识别 + 图纸小工具 + 编辑器 + 施工模式 | ✅ 完成：去杂点、框选裁剪、边界识别、29 格分区线、库页长按菜单、取豆清单、减到 N 色、画布变换、PNG 导出、编辑器（画笔/橡皮/油漆桶/吸管/直线/矩形/镜像/撤销/一键替换）、施工模式（全部/逐色/逐行、打勾、进度、防抖落盘） |
-| M4 | 豆数成本统计 + A4 分页 PDF 导出 + 打磨 | ✅ 完成：成本与工时估算、A4 分页 PDF、启动图标 |
+| M4 | 豆数成本统计 + A4 分页 PDF 导出 + 材料单 CSV + 打磨 | ✅ 完成：成本与工时估算、A4 分页 PDF、材料单 CSV、启动图标 |
 | M5 | 豆仓库存（记数量、算缺口、补货成本） | ✅ 完成 |
 | — | 「关于」页 + 自愿赞助通道（静态收款码，不联网、不锁功能） | ✅ 已完成 |
 
@@ -188,6 +188,14 @@
 - 安全边界：只接受 `patterns/<id>.json` 这种文件名，目录穿越条目直接拒绝；损坏的图纸或设置会让整次导入中止，不做“跳过坏文件继续导入”的半套恢复。
 - 模拟器验证：9 张图纸导出后与 App 内 JSON 逐字节一致；同库合并得到 17 张（8 张副本 + 1 张恢复），校准/库存只补缺失项、成本与色板开关保持本地；覆盖后图纸回到 9 张、设置全部还原、缩略图 7 张按需重建；损坏 zip 被拒绝且数据不变。真机 SAF 面板尚未验证。
 
+## 材料单 CSV（0.6.13）
+
+- 入口：图纸详情页「导出材料单 CSV」，存到 `下载/豆格/`，和 PNG/PDF 一样走 MediaStore，不申请存储权限。
+- 一枚色号一行：序号、色号、色系、HEX、颗数、袋数（按 100 颗/袋向上取整）、单价、小计、库存、还缺。末行是合计；没记过库存的色号，库存和缺口留空，不按 0 处理。
+- 文件带 UTF-8 BOM、CRLF 换行，Windows 版 Excel 双击打开中文不乱码；金额固定两位小数，可直接当采购/备料表算。
+- 排序跟随详情页的「按用量降序」，用量大的色号排前面，先备主色。
+- 模拟器验证：12 色 / 1743 颗的图纸导出后列数、金额（合计 ¥34.86）与 26 袋换算正确；临时记入 H2=500、A19=100 后，库存与缺口正确输出为 464 / 59 颗，合计缺口 523。真机未单独验证（同一套 MediaStore 路径已在 PNG/PDF 上用过）。
+
 ## 缩略图缓存（0.6.3）
 
 - 库页缩略图不再每帧重画所有格子：`data/PatternThumbCache.kt` 按「尺寸 + 色板 + 色板颜色指纹 + cells 内容哈希」渲染一次 256px 位图，内存 LruCache（8MB）+ `filesDir/thumbs/<id>-<尺寸>-<色板>-<指纹>-<哈希>.png` 双缓存，之后滚动直接贴图。
@@ -202,7 +210,7 @@
 │  └─ src/main/
 │     ├─ java/com/pindou/app/
 │     │  ├─ MainActivity.kt
-│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
+│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复）、MaterialListCsv（材料单 CSV）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
 │     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、about/（关于 + 数据备份）、theme/
 │     ├─ assets/
 │     │  ├─ palette/        mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）

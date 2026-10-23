@@ -55,6 +55,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.pindou.app.data.CostSettings
 import com.pindou.app.data.InventoryStore
+import com.pindou.app.data.MaterialListCsv
 import com.pindou.app.data.Palette
 import com.pindou.app.data.Pattern
 import com.pindou.app.data.PatternCleaner
@@ -93,6 +94,7 @@ fun PatternDetailScreen(
     var priceText by remember { mutableStateOf("") }
     var minutesText by remember { mutableStateOf("") }
     var exportingPdf by remember { mutableStateOf(false) }
+    var exportingCsv by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     var sharing by remember { mutableStateOf(false) }
     var reduceTo by remember { mutableFloatStateOf(6f) }
@@ -414,6 +416,38 @@ fun PatternDetailScreen(
                             "导出 A4 PDF（共 ${PatternPdf.pageCount(current)} 页）"
                         },
                     )
+                }
+            }
+
+            item {
+                OutlinedButton(
+                    onClick = {
+                        if (exportingCsv) return@OutlinedButton
+                        exportingCsv = true
+                        scope.launch {
+                            val res = withContext(Dispatchers.IO) {
+                                try {
+                                    MaterialListCsv.export(context, current, palette, cost) { code ->
+                                        inventory.count(current.paletteId, code)
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                            exportingCsv = false
+                            if (res == null) {
+                                snackbar.showSnackbar("导出失败，检查存储空间")
+                            } else {
+                                snackbar.showSnackbar("已导出材料单：${res.savedAs}")
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !exportingCsv,
+                ) {
+                    Text(if (exportingCsv) "生成材料单中…" else "导出材料单 CSV")
                 }
             }
 
