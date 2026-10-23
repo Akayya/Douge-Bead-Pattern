@@ -23,17 +23,26 @@ object PatternFile {
 
     const val MIME = "application/json"
 
-    data class Parsed(val pattern: Pattern, val colors: Map<String, String>)
+    data class Parsed(
+        val pattern: Pattern,
+        val colors: Map<String, String>,
+        val embeddedPalette: Palette? = null,
+    )
     data class Prepared(val pattern: Pattern, val renamed: Boolean)
 
     sealed interface Outcome {
-        data class Success(val pattern: Pattern, val mismatchedColors: Int) : Outcome
+        data class Success(
+            val pattern: Pattern,
+            val mismatchedColors: Int,
+            val paletteNote: String? = null,
+        ) : Outcome
         data class Failure(val message: String) : Outcome
     }
 
     class ImportException(message: String) : Exception(message)
 
     fun encode(pattern: Pattern, palette: Palette, versionName: String): String {
+        require(palette.id == pattern.paletteId) { "色板与图纸不匹配" }
         val colors = JSONObject()
         for (value in pattern.cells) {
             if (value < 0) continue
@@ -49,6 +58,10 @@ object PatternFile {
             .put("paletteId", pattern.paletteId)
             .put("colors", colors)
             .put("pattern", JSONObject(PatternStore.serialize(pattern)))
+        // 自定义色板没有内置资源可查，必须随图纸带上完整定义，接收方才走得通
+        if (!PaletteId.isBuiltIn(palette.id)) {
+            root.put("palette", JSONObject(palette.toJson()))
+        }
         return root.toString()
     }
 
@@ -65,8 +78,13 @@ object PatternFile {
             ?: throw ImportException("图纸内容已损坏，无法导入")
         val paletteId = root.optString("paletteId", pattern.paletteId)
         if (paletteId != pattern.paletteId) throw ImportException("图纸的色板信息不一致")
-        if (paletteId != PaletteId.MARD_221 && paletteId != PaletteId.MARD_291) {
-            throw ImportException("图纸使用了本地不支持的色板")
+        if (!PaletteId.isValid(paletteId)) throw ImportException("图纸的色板信息不合法")
+        val embeddedPalette = root.optJSONObject("palette")?.let { json ->
+            val palette = runCatching { Palette.fromJson(json.toString()) }.getOrElse {
+                throw ImportException("图纸携带的色板已损坏，无法导入")
+            }
+            if (palette.id != paletteId) throw ImportException("图纸携带的色板信息不一致")
+            palette
         }
         val colors = HashMap<String, String>()
         val colorsJson = root.optJSONObject("colors")
@@ -78,7 +96,7 @@ object PatternFile {
                 if (hex.isNotEmpty()) colors[code] = hex
             }
         }
-        return Parsed(pattern, colors)
+        return Parsed(pattern, colors, embeddedPalette)
     }
 
     /** 本地色板里没有的色号数。外部文件可能带越界下标，导入前必须先挡住。 */

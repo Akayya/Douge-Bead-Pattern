@@ -136,10 +136,11 @@ fun LibraryScreen(
                 is PatternFile.Outcome.Success -> {
                     scrollTopAfterImport = true
                     val mismatches = outcome.mismatchedColors
+                    val note = outcome.paletteNote?.let { "，$it" } ?: ""
                     if (mismatches == 0) {
-                        snackbar.showSnackbar("已导入「${outcome.pattern.name}」")
+                        snackbar.showSnackbar("已导入「${outcome.pattern.name}」$note")
                     } else {
-                        importNotice = "已导入「${outcome.pattern.name}」。\n\n" +
+                        importNotice = "已导入「${outcome.pattern.name}」$note。\n\n" +
                             "来源图纸有 $mismatches 个色号的颜色与本地不同，" +
                             "可能是色板校准差异，显示会有偏差。"
                     }

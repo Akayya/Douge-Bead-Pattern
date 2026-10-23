@@ -2,6 +2,7 @@ package com.pindou.app.ui.palette
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -28,6 +29,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -55,6 +57,8 @@ import androidx.compose.ui.unit.sp
 import com.pindou.app.data.BeadColor
 import com.pindou.app.data.HexColor
 import com.pindou.app.data.InventoryCsv
+import com.pindou.app.data.Palette
+import com.pindou.app.data.PaletteCsv
 import com.pindou.app.data.PaletteId
 import com.pindou.app.data.PaletteGroups
 import com.pindou.app.data.InventoryStore
@@ -70,16 +74,22 @@ import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 
 /**
- * 色板页：切换 MARD 221 / 291，按色系筛，点色块切换「我有 / 没有」。
+ * 色板页：切换内置 / 自定义色板，按色系筛，点色块切换「我有 / 没有」。
  * 没有的色号会在转图纸时被排除，避免出图给一堆买不到的色号。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> Unit) {
+fun PaletteScreen(
+    store: PaletteStore,
+    inventory: InventoryStore,
+    onBack: () -> Unit,
+    paletteUsage: (String) -> Int = { 0 },
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val palette = store.current
+    val palettes = remember(store.revision) { store.availablePalettes() }
     var group by remember(palette.id) { mutableStateOf<String?>(null) }
     var editColor by remember { mutableStateOf<BeadColor?>(null) }
     var editCount by remember { mutableStateOf("") }
@@ -87,6 +97,10 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
     var calibrateText by remember { mutableStateOf("") }
     var readingCsv by remember { mutableStateOf(false) }
     var importPreview by remember { mutableStateOf<InventoryCsv.Parsed?>(null) }
+    var readingPaletteCsv by remember { mutableStateOf(false) }
+    var paletteImport by remember { mutableStateOf<PaletteCsv.Parsed?>(null) }
+    var paletteImportTitle by remember { mutableStateOf("") }
+    var deletePalette by remember { mutableStateOf<Palette?>(null) }
     val shown = if (group == null) palette.colors else palette.colors.filter { it.group == group }
 
     val csvPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -114,6 +128,35 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
         }
     }
 
+    val paletteCsvPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        readingPaletteCsv = true
+        scope.launch {
+            val parsed = withContext(Dispatchers.IO) {
+                try {
+                    val fallback = queryDisplayName(context, uri)
+                        ?.substringBeforeLast('.')
+                        ?.trim()
+                        ?.take(30)
+                        ?.ifBlank { "自定义色板" }
+                        ?: "自定义色板"
+                    PaletteCsv.parse(readCsvText(context, uri), fallback)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    PaletteCsv.Parsed("自定义色板", error = "读取失败：${e.message ?: "格式不支持"}")
+                }
+            }
+            readingPaletteCsv = false
+            if (parsed.error != null) {
+                snackbar.showSnackbar(parsed.error)
+            } else {
+                paletteImportTitle = parsed.title
+                paletteImport = parsed
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -122,6 +165,7 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
                         Text("色板", style = MaterialTheme.typography.titleLarge)
                         Text(
                             text = buildString {
+                                if (store.isCustom(palette.id)) append("自定义 · ")
                                 append("${palette.title} · 已有 ${store.enabledCount} / ${palette.count} 色")
                                 val calibrated = store.calibratedCount
                                 if (calibrated > 0) append(" · 校准 $calibrated 色")
@@ -147,20 +191,45 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
         snackbarHost = { SnackbarHost(snackbar) },
     ) { inner ->
         Column(Modifier.fillMaxSize().padding(inner)) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                FilterChip(
-                    selected = palette.id == PaletteId.MARD_221,
-                    onClick = { store.switchPalette(PaletteId.MARD_221) },
-                    label = { Text("MARD 221") },
-                )
-                FilterChip(
-                    selected = palette.id == PaletteId.MARD_291,
-                    onClick = { store.switchPalette(PaletteId.MARD_291) },
-                    label = { Text("MARD 291") },
-                )
+                items(palettes, key = { it.id }) { item ->
+                    FilterChip(
+                        selected = palette.id == item.id,
+                        onClick = { store.switchPalette(item.id) },
+                        label = {
+                            Text(
+                                text = when (item.id) {
+                                    PaletteId.MARD_221 -> "MARD 221"
+                                    PaletteId.MARD_291 -> "MARD 291"
+                                    else -> item.title
+                                },
+                                maxLines = 1,
+                            )
+                        },
+                    )
+                }
+                item {
+                    AssistChip(
+                        onClick = {
+                            paletteCsvPicker.launch(
+                                arrayOf("text/*", "application/csv", "application/octet-stream"),
+                            )
+                        },
+                        enabled = !readingPaletteCsv,
+                        label = { Text(if (readingPaletteCsv) "读取中…" else "导入色板") },
+                    )
+                }
+                if (store.isCustom(palette.id)) {
+                    item {
+                        AssistChip(
+                            onClick = { deletePalette = palette },
+                            label = { Text("删除此色板") },
+                        )
+                    }
+                }
             }
 
             Text(
@@ -313,6 +382,121 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
             },
             dismissButton = {
                 TextButton(onClick = { importPreview = null }) { Text("取消") }
+            },
+        )
+    }
+
+    val paletteDraft = paletteImport
+    if (paletteDraft != null) {
+        AlertDialog(
+            onDismissRequest = { paletteImport = null },
+            title = { Text("导入色板") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = paletteImportTitle,
+                        onValueChange = { paletteImportTitle = it.take(30) },
+                        singleLine = true,
+                        label = { Text("色板名称") },
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "识别 ${paletteDraft.colors.size} 色" +
+                            if (paletteDraft.invalidRows > 0) {
+                                "，跳过 ${paletteDraft.invalidRows} 行无效数据（重复色号、颜色格式不对或列数不足）"
+                            } else {
+                                ""
+                            },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        for (color in paletteDraft.colors.take(8)) {
+                            Box(
+                                Modifier
+                                    .size(22.dp)
+                                    .background(Color(color.argb), RoundedCornerShape(5.dp))
+                                    .border(
+                                        1.dp,
+                                        MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                        RoundedCornerShape(5.dp),
+                                    ),
+                            )
+                        }
+                        if (paletteDraft.colors.size > 8) {
+                            Text(
+                                "+${paletteDraft.colors.size - 8}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "导入后会自动切换到新色板。图纸会记住自己使用的色板，切换不影响已有图纸。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = paletteImportTitle.trim().isNotEmpty(),
+                    onClick = {
+                        val imported = store.importCustomPalette(paletteImportTitle, paletteDraft.colors)
+                        paletteImport = null
+                        store.switchPalette(imported.id)
+                        scope.launch {
+                            snackbar.showSnackbar("已导入色板「${imported.title}」，共 ${imported.count} 色")
+                        }
+                    },
+                ) { Text("导入") }
+            },
+            dismissButton = {
+                TextButton(onClick = { paletteImport = null }) { Text("取消") }
+            },
+        )
+    }
+
+    val deleting = deletePalette
+    if (deleting != null) {
+        val usage = paletteUsage(deleting.id)
+        AlertDialog(
+            onDismissRequest = { deletePalette = null },
+            title = { Text("删除色板") },
+            text = {
+                Column {
+                    Text("「${deleting.title}」将从本机删除，颜色校准、库存和「我有 / 没有」设置会一并清除。")
+                    if (usage > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "有 $usage 张图纸正在使用这个色板，先把这些图纸删掉或换成别的色板，再回来删除。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = usage == 0,
+                    onClick = {
+                        val deleted = store.deleteCustomPalette(deleting.id)
+                        if (deleted) inventory.clearPalette(deleting.id)
+                        deletePalette = null
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                if (deleted) "已删除色板「${deleting.title}」" else "删除失败，请稍后重试",
+                            )
+                        }
+                    },
+                ) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deletePalette = null }) { Text("取消") }
             },
         )
     }
@@ -523,6 +707,12 @@ private fun ColorCell(
 }
 
 private const val MAX_CSV_BYTES = 2 * 1024 * 1024
+
+/** 拿 SAF 文件名，给色板起个默认名字；读不到就用兜底名。 */
+private fun queryDisplayName(context: Context, uri: Uri): String? = runCatching {
+    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+}.getOrNull()
 
 /** 读库存 CSV：限 2 MB；先按 UTF-8 严格解，失败再按 GB18030（中文 Excel 常见）。 */
 private fun readCsvText(context: Context, uri: Uri): String {

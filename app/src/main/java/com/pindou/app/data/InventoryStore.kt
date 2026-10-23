@@ -65,6 +65,15 @@ class InventoryStore(private val context: Context) {
         persist()
     }
 
+    /** 删除自定义色板时清掉它的库存记录。 */
+    fun clearPalette(paletteId: String) {
+        val prefix = "$paletteId|"
+        val keys = counts.keys.filter { it.startsWith(prefix) }
+        if (keys.isEmpty()) return
+        for (key in keys) counts.remove(key)
+        persist()
+    }
+
     private fun persist() {
         val root = JSONObject()
         for ((key, value) in counts) {

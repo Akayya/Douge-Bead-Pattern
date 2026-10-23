@@ -75,10 +75,8 @@ object PatternStore {
             }
         }
         val createdAt = root.optLong("createdAt", System.currentTimeMillis())
-        val paletteId = when (root.optString("paletteId", PaletteId.MARD_221)) {
-            PaletteId.MARD_291 -> PaletteId.MARD_291
-            else -> PaletteId.MARD_221
-        }
+        val paletteId = root.optString("paletteId", PaletteId.MARD_221)
+            .takeIf { PaletteId.isValid(it) } ?: PaletteId.MARD_221
         return Pattern(
             id = id,
             name = root.optString("name", "").ifBlank { "未命名图纸" },
@@ -119,7 +117,8 @@ object PatternStore {
             name = root.getString("name"),
             width = w,
             height = h,
-            paletteId = root.optString("paletteId", PaletteId.MARD_221),
+            paletteId = root.optString("paletteId", PaletteId.MARD_221)
+                .takeIf { PaletteId.isValid(it) } ?: PaletteId.MARD_221,
             cells = cells,
             createdAt = root.optLong("createdAt", file.lastModified()),
             updatedAt = root.optLong("updatedAt", file.lastModified()),

@@ -29,12 +29,14 @@ import java.util.zip.ZipOutputStream
 object BackupManager {
 
     private const val APP_TAG = "douge"
-    private const val FORMAT = 1
+    private const val FORMAT = 2
+    private const val MIN_FORMAT = 1
     private const val MANIFEST = "manifest.json"
     private const val MAX_ENTRY_BYTES = 32L * 1024 * 1024
     private const val MAX_TOTAL_BYTES = 96L * 1024 * 1024
     private const val MAX_ENTRIES = 5000
     private val PATTERN_NAME = Regex("^patterns/([A-Za-z0-9_-]{4,64})\\.json$")
+    private val PALETTE_NAME = Regex("^palettes/([A-Za-z0-9_-]{4,64})\\.json$")
     private val SETTINGS = listOf(
         "palette_state.json",
         "palette_calibrated.json",
@@ -43,7 +45,14 @@ object BackupManager {
         "cost.json",
     )
 
-    data class Info(val createdAt: Long, val appVersion: String, val patternCount: Int)
+    private data class PaletteEntry(val id: String, val palette: Palette, val data: ByteArray)
+
+    data class Info(
+        val createdAt: Long,
+        val appVersion: String,
+        val patternCount: Int,
+        val paletteCount: Int = 0,
+    )
     data class ExportResult(val patternCount: Int)
     data class ImportResult(val added: Int, val copies: Int, val overwrite: Boolean)
 
@@ -60,7 +69,10 @@ object BackupManager {
 
     /** 写入 zip；返回时会关闭 output。 */
     fun exportTo(context: Context, output: OutputStream): ExportResult {
-        val patternFiles = PatternStore.list(context).mapNotNull { pattern ->
+        val patterns = PatternStore.list(context)
+        val palettes = readCustomPalettes(context)
+        ensurePatternPalettes(context, patterns, palettes.associate { it.id to it.palette })
+        val patternFiles = patterns.mapNotNull { pattern ->
             val file = File(File(context.filesDir, "patterns"), "${pattern.id}.json")
             runCatching { pattern.id to file.readBytes() }.getOrNull()
         }
@@ -70,11 +82,15 @@ object BackupManager {
             .put("versionName", appVersion(context))
             .put("createdAt", System.currentTimeMillis())
             .put("patternCount", patternFiles.size)
+            .put("paletteCount", palettes.size)
 
         ZipOutputStream(BufferedOutputStream(output)).use { zip ->
             writeEntry(zip, MANIFEST, manifest.toString(2).toByteArray(Charsets.UTF_8))
             for ((id, data) in patternFiles) {
                 writeEntry(zip, "patterns/$id.json", data)
+            }
+            for (entry in palettes) {
+                writeEntry(zip, "palettes/${entry.id}.json", entry.data)
             }
             for (file in settingsFiles(context)) {
                 if (file.exists()) writeEntry(zip, file.name, file.readBytes())
@@ -98,6 +114,7 @@ object BackupManager {
             createdAt = manifest.optLong("createdAt", 0L),
             appVersion = manifest.optString("versionName", "?"),
             patternCount = entries.keys.count { PATTERN_NAME.matches(it) },
+            paletteCount = entries.keys.count { PALETTE_NAME.matches(it) },
         )
     }
 
@@ -109,6 +126,7 @@ object BackupManager {
             createdAt = manifest.optLong("createdAt", 0L),
             appVersion = manifest.optString("versionName", "?"),
             patternCount = manifest.optInt("patternCount", 0),
+            paletteCount = manifest.optInt("paletteCount", 0),
         )
     }
 
@@ -147,15 +165,20 @@ object BackupManager {
                 .getOrElse { throw BackupException("备份里的 $name 已损坏，未做任何修改") }
         }
 
-        return if (overwrite) restoreAll(context, patterns, settings)
-        else merge(context, patterns, settings)
+        val palettes = parsePalettes(entries)
+        ensurePatternPalettes(context, patterns, palettes.mapValues { it.value.palette })
+
+        return if (overwrite) restoreAll(context, patterns, settings, palettes)
+        else merge(context, patterns, settings, palettes)
     }
 
     private fun merge(
         context: Context,
         incoming: List<Pattern>,
         settings: Map<String, ByteArray>,
+        palettes: Map<String, PaletteEntry>,
     ): ImportResult {
+        mergePalettes(context, palettes)
         val dir = File(context.filesDir, "patterns").apply { if (!exists()) mkdirs() }
         val used = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }
             ?.mapNotNull { it.name.removeSuffix(".json").takeIf { id -> id.isNotEmpty() } }
@@ -193,34 +216,63 @@ object BackupManager {
         context: Context,
         incoming: List<Pattern>,
         settings: Map<String, ByteArray>,
+        palettes: Map<String, PaletteEntry>,
     ): ImportResult {
         val root = context.filesDir
         val staging = File(root, "patterns-importing")
+        val paletteStaging = File(root, "palettes-importing")
         staging.deleteRecursively()
-        if (!staging.mkdirs()) throw BackupException("无法写入应用存储")
+        paletteStaging.deleteRecursively()
+        if (!staging.mkdirs() || !paletteStaging.mkdirs()) {
+            staging.deleteRecursively()
+            paletteStaging.deleteRecursively()
+            throw BackupException("无法写入应用存储")
+        }
         try {
             for (pattern in incoming) {
                 File(staging, "${pattern.id}.json").writeText(PatternStore.serialize(pattern))
             }
+            for (entry in palettes.values) {
+                File(paletteStaging, "${entry.id}.json").writeBytes(entry.data)
+            }
         } catch (e: Exception) {
             staging.deleteRecursively()
+            paletteStaging.deleteRecursively()
             throw BackupException("写入备份失败：${e.message ?: "存储空间不足"}")
         }
 
         val target = File(root, "patterns")
         val previous = File(root, "patterns-before-import")
+        val paletteTarget = File(root, "palettes")
+        val palettePrevious = File(root, "palettes-before-import")
         previous.deleteRecursively()
+        palettePrevious.deleteRecursively()
         val hadPatterns = target.exists()
+        val hadPalettes = paletteTarget.exists()
         if (hadPatterns && !target.renameTo(previous)) {
             staging.deleteRecursively()
+            paletteStaging.deleteRecursively()
             throw BackupException("无法替换当前图纸目录")
         }
-        if (!staging.renameTo(target)) {
+        if (hadPalettes && !paletteTarget.renameTo(palettePrevious)) {
             if (hadPatterns) previous.renameTo(target)
             staging.deleteRecursively()
-            throw BackupException("无法替换当前图纸目录")
+            paletteStaging.deleteRecursively()
+            throw BackupException("无法替换当前色板目录")
+        }
+        val patternsSwapped = staging.renameTo(target)
+        val palettesSwapped = patternsSwapped && paletteStaging.renameTo(paletteTarget)
+        if (!patternsSwapped || !palettesSwapped) {
+            if (patternsSwapped) target.renameTo(staging)
+            if (palettesSwapped) paletteTarget.renameTo(paletteStaging)
+            if (hadPatterns) previous.renameTo(target)
+            if (hadPalettes) palettePrevious.renameTo(paletteTarget)
+            staging.deleteRecursively()
+            paletteStaging.deleteRecursively()
+            throw BackupException("无法替换当前数据目录")
         }
         previous.deleteRecursively()
+        palettePrevious.deleteRecursively()
 
         for (name in SETTINGS) {
             val file = File(root, name)
@@ -229,6 +281,30 @@ object BackupManager {
         }
         PatternThumbCache.clearAll(context)
         return ImportResult(incoming.size, copies = 0, overwrite = true)
+    }
+
+    /** 合并色板：编号同一律按本地内容为准；内容不同则整包拒绝，避免图纸颜色错位。 */
+    private fun mergePalettes(context: Context, incoming: Map<String, PaletteEntry>) {
+        if (incoming.isEmpty()) return
+        val dir = File(context.filesDir, "palettes").apply { if (!exists()) mkdirs() }
+        for ((id, entry) in incoming) {
+            val file = File(dir, "$id.json")
+            if (!file.exists()) continue
+            val local = runCatching { Palette.fromJson(file.readText()) }.getOrElse {
+                throw BackupException("本地自定义色板「$id」已损坏，未做任何修改")
+            }
+            if (local.colors != entry.palette.colors) {
+                throw BackupException("本地已有内容不同的色板「$id」，未做任何修改")
+            }
+        }
+        try {
+            for ((id, entry) in incoming) {
+                val file = File(dir, "$id.json")
+                if (!file.exists()) file.writeBytes(entry.data)
+            }
+        } catch (e: Exception) {
+            throw BackupException("写入自定义色板失败：${e.message ?: "存储空间不足"}")
+        }
     }
 
     private fun mergeSettings(context: Context, settings: Map<String, ByteArray>) {
@@ -271,6 +347,69 @@ object BackupManager {
         }
     }
 
+    private fun readCustomPalettes(context: Context): List<PaletteEntry> {
+        val files = File(context.filesDir, "palettes")
+            .listFiles { f -> f.isFile && f.name.endsWith(".json") }
+            ?: return emptyList()
+        val out = ArrayList<PaletteEntry>(files.size)
+        for (file in files.sortedBy { it.name }) {
+            val id = file.name.removeSuffix(".json")
+            val palette = runCatching { Palette.fromJson(file.readText()) }.getOrElse {
+                throw BackupException("本机自定义色板「$id」已损坏，无法备份")
+            }
+            if (!PaletteId.isValid(id) || PaletteId.isBuiltIn(id) || palette.id != id) {
+                throw BackupException("本机自定义色板「$id」编号异常，无法备份")
+            }
+            val data = runCatching { file.readBytes() }.getOrElse {
+                throw BackupException("读取自定义色板「$id」失败")
+            }
+            out.add(PaletteEntry(id, palette, data))
+        }
+        return out
+    }
+
+    private fun parsePalettes(entries: Map<String, ByteArray>): LinkedHashMap<String, PaletteEntry> {
+        val out = LinkedHashMap<String, PaletteEntry>()
+        for ((name, data) in entries) {
+            val match = PALETTE_NAME.matchEntire(name) ?: continue
+            val expectedId = match.groupValues[1]
+            if (PaletteId.isBuiltIn(expectedId)) {
+                throw BackupException("备份里的色板编号与内置色板冲突，未做任何修改")
+            }
+            val palette = runCatching { Palette.fromJson(String(data, Charsets.UTF_8)) }.getOrElse {
+                throw BackupException("备份里的色板「$expectedId」已损坏，未做任何修改")
+            }
+            if (palette.id != expectedId) {
+                throw BackupException("备份里的色板编号不一致，未做任何修改")
+            }
+            out[expectedId] = PaletteEntry(expectedId, palette, data)
+        }
+        return out
+    }
+
+    /** 先解析所有图纸引用的色板并检查下标范围，避免恢复后颜色错位。 */
+    private fun ensurePatternPalettes(
+        context: Context,
+        patterns: List<Pattern>,
+        incoming: Map<String, Palette>,
+    ) {
+        val resolved = HashMap<String, Palette>()
+        for (pattern in patterns) {
+            val palette = resolved.getOrPut(pattern.paletteId) {
+                incoming[pattern.paletteId] ?: when (pattern.paletteId) {
+                    PaletteId.MARD_221 -> Palette.load(context, Palette.ASSET_221)
+                    PaletteId.MARD_291 -> Palette.load(context, Palette.ASSET_291)
+                    else -> throw BackupException(
+                        "图纸「${pattern.name}」使用了备份里没有的色板，未做任何修改",
+                    )
+                }
+            }
+            if (pattern.cells.any { it >= palette.count }) {
+                throw BackupException("图纸「${pattern.name}」的色号超出色板范围，未做任何修改")
+            }
+        }
+    }
+
     private fun readEntries(input: InputStream): Map<String, ByteArray> {
         val entries = LinkedHashMap<String, ByteArray>()
         var total = 0L
@@ -283,6 +422,9 @@ object BackupManager {
                     if (!isKnownEntry(name)) {
                         if (name.startsWith("patterns/")) {
                             throw BackupException("备份里的图纸文件名异常")
+                        }
+                        if (name.startsWith("palettes/")) {
+                            throw BackupException("备份里的色板文件名异常")
                         }
                         continue
                     }
@@ -319,7 +461,7 @@ object BackupManager {
     }
 
     private fun isKnownEntry(name: String): Boolean =
-        name == MANIFEST || name in SETTINGS || PATTERN_NAME.matches(name)
+        name == MANIFEST || name in SETTINGS || PATTERN_NAME.matches(name) || PALETTE_NAME.matches(name)
 
     private fun readManifest(input: InputStream): JSONObject {
         ZipInputStream(BufferedInputStream(input)).use { zip ->
@@ -349,7 +491,7 @@ object BackupManager {
             throw BackupException("不是豆格的备份文件")
         }
         val format = manifest.optInt("format", 0)
-        if (format != FORMAT) {
+        if (format !in MIN_FORMAT..FORMAT) {
             throw BackupException("备份格式版本不支持（$format）")
         }
     }

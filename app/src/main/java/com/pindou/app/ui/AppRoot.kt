@@ -15,6 +15,7 @@ import com.pindou.app.data.Pattern
 import com.pindou.app.data.CostSettings
 import com.pindou.app.data.DeductionStore
 import com.pindou.app.data.InventoryStore
+import com.pindou.app.data.PaletteId
 import com.pindou.app.data.PatternFile
 import com.pindou.app.data.PatternStore
 import com.pindou.app.data.PatternThumbCache
@@ -149,16 +150,47 @@ fun AppRoot() {
                     val parsed = withContext(Dispatchers.IO) {
                         PatternFile.parse(PatternFile.readText(context, uri))
                     }
-                    val localPalette = store.palette(parsed.pattern.paletteId)
+                    val embedded = parsed.embeddedPalette
+                    val byId = store.paletteOrNull(parsed.pattern.paletteId)
+                    var paletteNote: String? = null
+                    val localPalette = when {
+                        embedded == null -> byId
+                        byId != null && byId.colors == embedded.colors -> byId
+                        else -> store.customPalettes().firstOrNull { it.colors == embedded.colors }
+                            ?: store.importCustomPalette(embedded.title, embedded.colors).also {
+                                paletteNote = "同时导入色板「${it.title}」"
+                            }
+                    } ?: throw PatternFile.ImportException(
+                        if (PaletteId.isBuiltIn(parsed.pattern.paletteId)) {
+                            "色板加载失败，无法导入"
+                        } else {
+                            "图纸使用了本地没有的自定义色板，请先在色板页导入同名色板"
+                        },
+                    )
+                    val source = if (localPalette.id == parsed.pattern.paletteId) {
+                        parsed.pattern
+                    } else {
+                        Pattern(
+                            id = parsed.pattern.id,
+                            name = parsed.pattern.name,
+                            width = parsed.pattern.width,
+                            height = parsed.pattern.height,
+                            paletteId = localPalette.id,
+                            cells = parsed.pattern.cells,
+                            createdAt = parsed.pattern.createdAt,
+                            updatedAt = parsed.pattern.updatedAt,
+                            done = parsed.pattern.done,
+                        )
+                    }
                     withContext(Dispatchers.IO) {
-                        val unknown = PatternFile.unknownColorCount(parsed.pattern, localPalette)
+                        val unknown = PatternFile.unknownColorCount(source, localPalette)
                         if (unknown > 0) {
                             PatternFile.Outcome.Failure(
                                 "图纸里有 $unknown 个本地色板不存在的色号，无法导入",
                             )
                         } else {
                             val prepared = PatternFile.prepareForImport(
-                                parsed.pattern,
+                                source,
                                 usedIds,
                                 usedNames,
                             )
@@ -169,6 +201,7 @@ fun AppRoot() {
                                     parsed,
                                     localPalette,
                                 ),
+                                paletteNote = paletteNote,
                             )
                         }
                     }
@@ -191,7 +224,12 @@ fun AppRoot() {
             },
         )
 
-        Screen.Palette -> PaletteScreen(store = store, inventory = inventory, onBack = { screen = Screen.Library })
+        Screen.Palette -> PaletteScreen(
+            store = store,
+            inventory = inventory,
+            onBack = { screen = Screen.Library },
+            paletteUsage = { id -> patterns.count { it.paletteId == id } },
+        )
 
         Screen.About -> AboutScreen(
             onBack = { screen = Screen.Library },
@@ -217,7 +255,7 @@ fun AppRoot() {
                 PatternEditorScreen(
                     pattern = pattern,
                     palette = store.palette(pattern.paletteId),
-                    enabledColors = store.enabledColors(),
+                    enabledColors = store.enabledColors(pattern.paletteId),
                     onBack = { screen = Screen.Detail(pattern.id) },
                     onSaved = { updated ->
                         val index = patterns.indexOfFirst { it.id == updated.id }

@@ -7,10 +7,22 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
 
 class PatternFileTest {
 
-    private val palette = testPalette("#FF0000", "#00FF00", "#0000FF")
+    private fun paletteOf(id: String = PaletteId.MARD_221): Palette = Palette(
+        id = id,
+        title = "测试色板",
+        groups = listOf("T"),
+        colors = listOf(
+            BeadColor("T0", "#FF0000", "T"),
+            BeadColor("T1", "#00FF00", "T"),
+            BeadColor("T2", "#0000FF", "T"),
+        ),
+    )
+
+    private val palette = paletteOf()
 
     private fun sourcePattern(
         cells: IntArray = intArrayOf(0, 1, -1, 0),
@@ -39,6 +51,7 @@ class PatternFileTest {
         assertEquals(setOf(0, 3), parsed.pattern.done)
         assertEquals(mapOf("T0" to "#FF0000", "T1" to "#00FF00"), parsed.colors)
         assertEquals(0, PatternFile.mismatchedColorCount(parsed, palette))
+        assertEquals(null, parsed.embeddedPalette)
     }
 
     @Test
@@ -86,11 +99,55 @@ class PatternFileTest {
             PatternFile.parse(encoded.replace("\"kind\":\"pattern\"", "\"kind\":\"backup\""))
         }
         assertThrows(PatternFile.ImportException::class.java) {
-            PatternFile.parse(encoded.replace("\"paletteId\":\"mard221\"", "\"paletteId\":\"other\""))
+            PatternFile.parse(encoded.replace("\"paletteId\":\"mard221\"", "\"paletteId\":\"x\""))
         }
         assertThrows(PatternFile.ImportException::class.java) {
             PatternFile.parse(encoded.replace("\"w\":2", "\"w\":3"))
         }
+    }
+
+    @Test
+    fun acceptsValidCustomPaletteAndEmbedsIt() {
+        val customPalette = paletteOf("custom-abc123")
+        val custom = Pattern(
+            id = "abcd1234",
+            name = "小猫",
+            width = 2,
+            height = 2,
+            paletteId = "custom-abc123",
+            cells = intArrayOf(0, 1, -1, 0),
+            createdAt = 1000L,
+            updatedAt = 2000L,
+            done = mutableSetOf(0, 3),
+        )
+
+        val parsed = PatternFile.parse(PatternFile.encode(custom, customPalette, "0.6.20"))
+
+        assertEquals("custom-abc123", parsed.pattern.paletteId)
+        assertEquals("custom-abc123", parsed.embeddedPalette?.id)
+        assertEquals(customPalette.colors, parsed.embeddedPalette?.colors)
+    }
+
+    @Test
+    fun rejectsEmbeddedPaletteWithMismatchedId() {
+        val customPalette = paletteOf("custom-abc123")
+        val custom = Pattern(
+            id = "abcd1234",
+            name = "小猫",
+            width = 2,
+            height = 2,
+            paletteId = "custom-abc123",
+            cells = intArrayOf(0, 1, -1, 0),
+            createdAt = 1000L,
+            updatedAt = 2000L,
+            done = mutableSetOf(0, 3),
+        )
+        val encoded = PatternFile.encode(custom, customPalette, "0.6.20")
+        val broken = JSONObject(encoded).apply {
+            getJSONObject("palette").put("id", "custom-other")
+        }.toString()
+
+        assertThrows(PatternFile.ImportException::class.java) { PatternFile.parse(broken) }
     }
 
     @Test

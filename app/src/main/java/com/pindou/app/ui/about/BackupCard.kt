@@ -187,7 +187,11 @@ fun BackupCard(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "备份包含 ${info.patternCount} 张图纸，导出于 ${formatTime(info.createdAt)}，App ${info.appVersion}。",
+                        text = buildString {
+                            append("备份包含 ${info.patternCount} 张图纸")
+                            if (info.paletteCount > 0) append("、${info.paletteCount} 个自定义色板")
+                            append("，导出于 ${formatTime(info.createdAt)}，App ${info.appVersion}。")
+                        },
                         style = MaterialTheme.typography.bodySmall,
                     )
                     ModeOption(
@@ -198,7 +202,7 @@ fun BackupCard(
                     )
                     ModeOption(
                         title = "覆盖恢复",
-                        desc = "删除当前全部图纸和设置，用备份替换；不可撤销。",
+                        desc = "删除当前全部图纸、自定义色板和设置，用备份替换；不可撤销。",
                         selected = overwriteMode,
                         onClick = { overwriteMode = true },
                     )

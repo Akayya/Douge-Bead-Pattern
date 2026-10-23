@@ -17,6 +17,7 @@
 | M3 | 去杂点 + 框选裁剪 + 图形边界识别 + 图纸小工具 + 编辑器 + 施工模式 | ✅ 完成：去杂点、框选裁剪、边界识别、29 格分区线、库页长按菜单、取豆清单、减到 N 色、画布变换、PNG 导出、编辑器（画笔/橡皮/油漆桶/吸管/直线/矩形/镜像/撤销/一键替换）、施工模式（全部/逐色/逐行/按板、打勾、进度、防抖落盘） |
 | M4 | 豆数成本统计 + A4 分页 PDF 导出 + 材料单 CSV + 打磨 | ✅ 完成：成本与工时估算、A4 分页 PDF（29/58 格按板对齐）、材料单 CSV、启动图标 |
 | M5 | 豆仓库存（记数量、算缺口、补货成本、CSV 批量导入、拼完确认扣减） | ✅ 完成 |
+| — | 自定义色板（CSV 导入、切换/删除、单图随行、整库备份 v2） | ✅ 完成，模拟器验证通过（0.6.20） |
 | — | 「关于」页 + 自愿赞助通道（静态收款码，不联网、不锁功能） | ✅ 已完成 |
 
 模拟器截图在 `screenshots/`，按里程碑分六层（`m1/`…`m6/`），每层只留这个阶段最能说明问题的几张：M1 骨架与色板、M2 图片转图纸与原图网格识别、M3 编辑器/施工/画布/导出、M4 成本与 A4 PDF（含改版前后的对比图 `pdf-before-page2.png` / `pdf-after-page2.png`）、M5 豆仓库存与撤销、M6 空白画布/库页进度/施工页色号。截图不入库（`.gitignore` 里忽略整个 `screenshots/`）。
@@ -168,7 +169,7 @@
 
 ## 单元测试与去杂点修复（0.6.10）
 
-- 新增 JVM 单元测试（JUnit 4），`./gradlew.bat :app:testDebugUnitTest` 直接跑，不依赖模拟器；截至 0.6.19 是 14 个测试类共 71 个用例，覆盖 HEX 颜色解析、图纸裁剪/旋转/镜像、去杂点、减色、导出尺寸预算、施工进度、像素网格识别、材料单 CSV、PDF 分页、库存 CSV 导入、拼完扣减、29/58 板布局、快照保留策略、单图分享文件编解码与导入重命名。org.json 仅测试用，生产代码仍用 Android 自带实现。
+- 新增 JVM 单元测试（JUnit 4），`./gradlew.bat :app:testDebugUnitTest` 直接跑，不依赖模拟器；截至 0.6.20 是 16 个测试类共 83 个用例，覆盖 HEX 颜色解析、图纸裁剪/旋转/镜像、去杂点、减色、导出尺寸预算、施工进度、像素网格识别、材料单 CSV、PDF 分页、库存 CSV 导入、拼完扣减、29/58 板布局、快照保留策略、单图分享文件编解码与导入重命名、自定义色板 JSON 校验与 CSV 解析、内嵌色板的一致性校验。org.json 仅测试用，生产代码仍用 Android 自带实现。
 - 把 Android 依赖从纯逻辑里剥出来：新增 `HexColor`（替代 `android.graphics.Color.parseColor`），`PixelGridDetector.detect(IntArray, width, height)` 可脱离 `Bitmap` 测试；识别算法本身与重构前一致。
 - 顺手修了一个真 bug：去杂点用 `argb < 0` 判断「颜色无效」，而所有不透明色（`0xFF……`）在 Int 里都是负数，导致点「去杂点」永远提示「没有找到杂点」。现在改成可空数组判空；单测覆盖了近白噪点、两色混合过渡格，黑眼珠/线条端点仍会保留。
 - 工程目录名含中文时要注意编码：Gradle 给测试 worker 写的 `@argfile` 按 daemon 默认编码写、JVM 启动器按系统编码读。`gradle.properties` 因此用 `-Dfile.encoding=COMPAT`（跟随系统编码）；写死 UTF-8 会报 `ClassNotFoundException`。
@@ -182,12 +183,13 @@
 ## 整库备份与恢复（0.6.12）
 
 - 入口：关于页「数据备份」卡片。导出/导入都走系统文件选择器（SAF），不申请存储权限，也不联网。
-- 备份是一个 zip：`manifest.json`（App 标记、格式版本、导出时间、图纸数）+ `patterns/<id>.json` + `palette_state.json` + `palette_calibrated.json` + `inventory.json` + `cost.json`。图纸 JSON 原样写入，施工进度一起带走；缩略图缓存不备份，恢复后按需重建。
-- **合并导入**：现有图纸和设置都不删。备份里与本地同编号的图纸另存副本（名称加「（导入）」）；库存和颜色校准只补本地没记过的色号；色板开关与成本参数只在本地没有对应文件时采用备份值。
-- **覆盖恢复**：先完整校验 zip（清单、图纸 JSON、单元格数量、文件大小/数量上限），确认后把图纸目录整体换掉，再替换设置文件；会清空缩略图缓存。执行前二次确认，提示当前图纸数且不可撤销，建议先导出当前数据。
-- 安全边界：只接受 `patterns/<id>.json` 这种文件名，目录穿越条目直接拒绝；损坏的图纸或设置会让整次导入中止，不做“跳过坏文件继续导入”的半套恢复。
+- 备份是一个 zip：`manifest.json`（App 标记、格式版本、导出时间、图纸数、自定义色板数）+ `patterns/<id>.json` + `palettes/<id>.json` + `palette_state.json` + `palette_calibrated.json` + `inventory.json` + `inventory_deductions.json` + `cost.json`。图纸与色板 JSON 原样写入，施工进度一起带走；缩略图缓存不备份，恢复后按需重建。
+- **合并导入**：现有图纸和设置都不删。备份里与本地同编号的图纸另存副本（名称加「（导入）」）；库存和颜色校准只补本地没记过的色号；色板开关与成本参数只在本地没有对应文件时采用备份值。自定义色板按 id 合并：本地没有就写入；同 id 且颜色完全一致视为同一色板，不重复写；同 id 但颜色不同则整包拒绝，避免图纸色号错位。
+- **覆盖恢复**：先完整校验 zip（清单、图纸 JSON、色板 JSON、单元格数量与色板范围、文件大小/数量上限），确认后把图纸与色板目录整体换掉，再替换设置文件；会清空缩略图缓存。执行前二次确认，提示当前图纸数且不可撤销，建议先导出当前数据。
+- 格式 2（0.6.20 起）带自定义色板；格式 1 的旧备份仍可导入。旧包没有 `palettes/` 目录，覆盖恢复时本机自定义色板会被清空（整库替换语义），合并导入则保留本机色板。
+- 安全边界：只接受 `patterns/<id>.json` 与 `palettes/<id>.json` 这种文件名，目录穿越条目直接拒绝；损坏的图纸、色板或设置会让整次导入中止，不做“跳过坏文件继续导入”的半套恢复。
 - 0.6.18 起，覆盖恢复前会自动在本机留一份安全快照；快照本身不进导出备份包。
-- 模拟器验证：9 张图纸导出后与 App 内 JSON 逐字节一致；同库合并得到 17 张（8 张副本 + 1 张恢复），校准/库存只补缺失项、成本与色板开关保持本地；覆盖后图纸回到 9 张、设置全部还原、缩略图 7 张按需重建；损坏 zip 被拒绝且数据不变。真机 SAF 面板尚未验证。
+- 模拟器验证：9 张图纸导出后与 App 内 JSON 逐字节一致；同库合并得到 17 张（8 张副本 + 1 张恢复），校准/库存只补缺失项、成本与色板开关保持本地；覆盖后图纸回到 9 张、设置全部还原、缩略图 7 张按需重建；损坏 zip 被拒绝且数据不变。0.6.20 又用含 2 个自定义色板的 11 张图纸备份验证了 `paletteCount=2`、覆盖后色板与当前色板一起恢复、v1 旧包合并导入成功。真机 SAF 面板尚未验证。
 
 ## 材料单 CSV（0.6.13）
 
@@ -254,6 +256,17 @@
 - 导入成功后列表自动滚到顶部，新副本按「最近更新」排在第一张。最初直接调 `scrollToItem(0)` 会被 LazyColumn 的旧 key 锚点抵消（实测导入后原图纸仍占第一屏），现改为等列表完成重组后再滚。
 - 模拟器验证：47×50 / 1743 颗 / 12 色、进度 1 格的图纸分享文件与源 JSON 的 cells/done/paletteId 完全一致；导入后得到新编号副本、重名自动加「（导入）」并滚到第一屏，格子与进度逐项相同；改一个颜色 HEX 再导入会提示「1 个色号颜色与本地不同」；`{}` 文件被拒；测试副本与下载目录文件已清理，用户原 9 张图纸哈希未变。微信/QQ 真机接收 `.json` 是否方便尚未验证。
 
+## 自定义色板（0.6.20）
+
+- 色板页顶部新增「导入色板」：用系统文件选择器（SAF）选一个 CSV，先预览标题和识别到的颜色数，确认后创建自定义色板并自动切换过去。全程离线，不申请存储权限。
+- CSV 格式：带表头时色号列认 `色号 / 编号 / 颜色编号 / code / color / colorcode`，颜色列认 `hex / 颜色 / 色值 / 颜色值 / colorhex / rgb`；没有表头时默认「第一列色号、第二列 HEX」。支持逗号或制表符、带引号的单元格、BOM 和 CRLF；编码先严格 UTF-8，失败回退 GB18030；文件上限 2 MB、最多 500 色。
+- 校验：色号允许中英文、数字、`_`、`-`，统一转大写；HEX 补成 `#RRGGBB`；重复色号和非法颜色计入无效行；没有可导入色号时直接提示。预览里可以改色板名，确认后写入 `filesDir/palettes/<id>.json`（`{id,title,groups,colors:[{code,hex,g}]}`，与内置色板同构）。
+- 自定义色板和内置色板共用一套逻辑：当前色板、每色「我有/没有」、长按库存、颜色校准都按 `paletteId` 分开保存；图纸 JSON 里只记色板 id 与色号下标，编辑、缩略图、详情、导出、施工都按图纸自己的色板取色。
+- 删除自定义色板：自定义色板被选中时色板条最右出现「删除此色板」。有图纸正在使用就只提示数量、删除按钮置灰；没有使用才可删除，同时清掉该色板的校准、库存和开关记录；如果删的是当前色板，自动切回 MARD 221。
+- 单张图纸分享：自定义色板的图纸在 `.json` 里额外带 `palette` 对象（完整颜色表）。对方导入时优先按 id 复用本地色板；没有同 id 但颜色完全一致的自定义色板也直接复用；都没有就自动创建一份并提示「同时导入色板」，然后把图纸的 `paletteId` 重映射到本地新 id，格子下标不变。内置色板不内嵌。
+- 整库备份升级到格式 2，带 `palettes/` 与 `paletteCount`；合并/覆盖规则、v1 兼容见上一节。快照同样会感知色板文件的改动。
+- 模拟器验证：5 色 CSV 导入后生成 `files/palettes/custom-mvl8daef.json` 并自动切换，副标题显示「自定义 · test-palette」，单色开关重启后保持；用该色板新建 5×5 空白图画 5 格，图纸 JSON 为 `"paletteId":"custom-mvl8daef"`；有 1 张图纸使用时删除被拦截，另建一个未使用色板可删除并回落到 MARD 221；导入带内嵌色板的分享文件后新建 `远程色板` 并把图纸色板 id 重映射过去；实际生成的分享 JSON 经 `run-as` 确认同时包含 `paletteId`、`palette` 与完整 `pattern`；导出备份 manifest 为 `format=2, paletteCount=2`，覆盖恢复后 2 个色板、当前色板 `custom-mvl8daef` 与图纸全部回来；v1 旧包合并导入新增 1 张。测试后已把 App 数据恢复到测试前，9 张原图纸与备份 tar/原快照逐字节一致、施工进度仍为 1/1743、无残留自定义色板。真机微信/QQ 接收带色板 `.json` 尚未验证。
+
 ## 缩略图缓存（0.6.3）
 
 - 库页缩略图不再每帧重画所有格子：`data/PatternThumbCache.kt` 按「尺寸 + 色板 + 色板颜色指纹 + cells 内容哈希」渲染一次 256px 位图，内存 LruCache（8MB）+ `filesDir/thumbs/<id>-<尺寸>-<色板>-<指纹>-<哈希>.png` 双缓存，之后滚动直接贴图。
@@ -268,7 +281,7 @@
 │  └─ src/main/
 │     ├─ java/com/pindou/app/
 │     │  ├─ MainActivity.kt
-│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternFile（单图分享/导入）、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复）、SnapshotPolicy（快照保留策略）、SnapshotStore（本地自动快照）、MaterialListCsv（材料单 CSV）、InventoryCsv（库存 CSV 批量导入）、InventoryDeduction（拼完扣减计算）、InventoryStore（豆仓数量）、DeductionStore（已扣标记）、BoardLayout（29/58 拼豆板行列与裁剪计算）、CostSettings（成本参数）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
+│     │  ├─ data/           BeadColor/Palette、PaletteStore（内置与自定义色板、色号库存、校准、当前色板）、PaletteCsv（自定义色板 CSV 解析）、Pattern、PatternStore、PatternFile（单图分享/导入，含内嵌自定义色板）、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复，格式 v2）、SnapshotPolicy（快照保留策略）、SnapshotStore（本地自动快照）、MaterialListCsv（材料单 CSV）、InventoryCsv（库存 CSV 批量导入）、InventoryDeduction（拼完扣减计算）、InventoryStore（豆仓数量）、DeductionStore（已扣标记）、BoardLayout（29/58 拼豆板行列与裁剪计算）、CostSettings（成本参数）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
 │     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、about/（关于 + 数据备份 + 本地快照）、theme/
 │     ├─ assets/
 │     │  ├─ palette/        mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）

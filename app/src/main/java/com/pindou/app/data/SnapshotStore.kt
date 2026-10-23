@@ -119,7 +119,11 @@ object SnapshotStore {
             .listFiles { f -> f.isFile && f.name.endsWith(".json") }
             ?.toList()
             ?: emptyList()
-        val files = patterns + BackupManager.settingsFiles(context)
+        val palettes = File(context.filesDir, "palettes")
+            .listFiles { f -> f.isFile && f.name.endsWith(".json") }
+            ?.toList()
+            ?: emptyList()
+        val files = patterns + palettes + BackupManager.settingsFiles(context)
         return files.filter { it.isFile }.maxOfOrNull { it.lastModified() } ?: 0L
     }
 
