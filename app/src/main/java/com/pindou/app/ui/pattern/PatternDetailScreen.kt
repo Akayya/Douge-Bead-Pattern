@@ -64,6 +64,7 @@ import com.pindou.app.data.PatternReducer
 import com.pindou.app.data.PatternTransform
 import com.pindou.app.data.PatternStore
 import com.pindou.app.ui.PatternCanvas
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -320,10 +321,25 @@ fun PatternDetailScreen(
                             exporting = true
                             scope.launch {
                                 val res = withContext(Dispatchers.Default) {
-                                    PatternExporter.exportPng(context, current, palette)
+                                    try {
+                                        PatternExporter.exportPng(context, current, palette)
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        null
+                                    }
                                 }
                                 exporting = false
-                                snackbar.showSnackbar("已导出：${res.savedAs}")
+                                if (res == null) {
+                                    snackbar.showSnackbar("导出失败：图纸过大或存储空间不足")
+                                    return@launch
+                                }
+                                val note = if (res.cellPx < PatternExporter.PREFERRED_CELL_PX) {
+                                    "（大图按 ${res.cellPx}px/格）"
+                                } else {
+                                    ""
+                                }
+                                snackbar.showSnackbar("已导出$note：${res.savedAs}")
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -337,13 +353,17 @@ fun PatternDetailScreen(
                             sharing = true
                             scope.launch {
                                 val uri = withContext(Dispatchers.IO) {
-                                    runCatching {
+                                    try {
                                         PatternExporter.sharePng(context, current, palette)
-                                    }.getOrNull()
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        null
+                                    }
                                 }
                                 sharing = false
                                 if (uri == null) {
-                                    snackbar.showSnackbar("分享失败，检查存储空间")
+                                    snackbar.showSnackbar("分享失败：图纸过大或存储空间不足")
                                     return@launch
                                 }
                                 val send = Intent(Intent.ACTION_SEND).apply {

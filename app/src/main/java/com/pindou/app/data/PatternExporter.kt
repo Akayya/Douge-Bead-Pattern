@@ -21,32 +21,38 @@ import java.util.Locale
  */
 object PatternExporter {
 
-    data class Result(val savedAs: String, val path: String, val uri: Uri?)
+    data class Result(val savedAs: String, val path: String, val uri: Uri?, val cellPx: Int)
+
+    const val PREFERRED_CELL_PX = 26
+    private const val MIN_CELL_PX = 10
+
+    // 12M 像素 ≈ 48MB ARGB_8888；再大低端机导出时容易 OOM。
+    private const val MAX_PIXELS = 12_000_000L
 
     private const val GRID = 0xFFD6D6DD.toInt()
     private const val BOARD = 0xCC4A4A55.toInt()
     private const val EMPTY = 0xFFF4F4F8.toInt()
 
+    /** 返回 null 表示图纸太大，连最小格子尺寸都放不进内存预算。 */
     fun exportPng(
         context: Context,
         pattern: Pattern,
         palette: Palette,
-        cellPx: Int = 26,
-    ): Result {
-        val bmp = renderPng(pattern, palette, cellPx)
+    ): Result? {
+        val rendered = renderPng(pattern, palette) ?: return null
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         val fileName = "豆格-$stamp.png"
-        return save(context, bmp, fileName)
+        return save(context, rendered.bitmap, fileName, rendered.cellPx)
     }
 
-    /** 生成一张临时 PNG 供 ACTION_SEND 分享，返回 FileProvider 的 content:// URI。 */
+    /** 生成一张临时 PNG 供 ACTION_SEND 分享；返回 null 表示图纸太大。 */
     fun sharePng(
         context: Context,
         pattern: Pattern,
         palette: Palette,
-        cellPx: Int = 26,
-    ): Uri {
-        val bmp = renderPng(pattern, palette, cellPx)
+    ): Uri? {
+        val rendered = renderPng(pattern, palette) ?: return null
+        val bmp = rendered.bitmap
         val dir = File(context.cacheDir, "share").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
@@ -59,12 +65,27 @@ object PatternExporter {
         return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     }
 
-    private fun renderPng(
-        pattern: Pattern,
-        palette: Palette,
-        cellPx: Int,
-    ): Bitmap {
+    /**
+     * 在内存预算内选最大的格子像素。
+     * 尺寸按最终位图算，包含边距、标题和底部色号清单，不只算格子区域。
+     */
+    internal fun fitCellPx(width: Int, height: Int, colorCount: Int): Int? {
+        val legend = 30L * colorCount + 18L
+        for (cellPx in PREFERRED_CELL_PX downTo MIN_CELL_PX) {
+            val bmpW = width.toLong() * cellPx + 2L * cellPx
+            val bmpH = height.toLong() * cellPx + 4L * cellPx + legend
+            if (bmpW <= Int.MAX_VALUE && bmpH <= Int.MAX_VALUE && bmpW * bmpH <= MAX_PIXELS) {
+                return cellPx
+            }
+        }
+        return null
+    }
+
+    private data class Rendered(val bitmap: Bitmap, val cellPx: Int)
+
+    private fun renderPng(pattern: Pattern, palette: Palette): Rendered? {
         val usage = pattern.usage(palette)
+        val cellPx = fitCellPx(pattern.width, pattern.height, usage.size) ?: return null
         val margin = cellPx
         val header = cellPx * 2
         val legendRow = 30
@@ -73,7 +94,11 @@ object PatternExporter {
         val bmpW = pattern.width * cellPx + margin * 2
         val bmpH = pattern.height * cellPx + margin * 2 + header + legendH
 
-        val bmp = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+        val bmp = try {
+            Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+        } catch (e: OutOfMemoryError) {
+            return null
+        }
         val canvas = Canvas(bmp)
         canvas.drawColor(0xFFFFFFFF.toInt())
 
@@ -188,26 +213,29 @@ object PatternExporter {
             ly += legendRow
         }
 
-        return bmp
+        return Rendered(bmp, cellPx)
     }
 
-    private fun save(context: Context, bmp: Bitmap, fileName: String): Result {
-        // minSdk 31：只用 MediaStore，不再有老系统兜底分支
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/豆格")
-            put(MediaStore.Images.Media.IS_PENDING, 1)
+    private fun save(context: Context, bmp: Bitmap, fileName: String, cellPx: Int): Result {
+        try {
+            // minSdk 31：只用 MediaStore，不再有老系统兜底分支
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/豆格")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: throw IOException("插入相册失败")
+            resolver.openOutputStream(uri)?.use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                ?: throw IOException("打不开输出流")
+            values.clear()
+            values.put(MediaStore.Images.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            return Result("相册/Pictures/豆格/$fileName", "Pictures/豆格/$fileName", uri, cellPx)
+        } finally {
+            bmp.recycle()
         }
-        val resolver = context.contentResolver
-        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            ?: throw IOException("插入相册失败")
-        resolver.openOutputStream(uri)?.use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            ?: throw IOException("打不开输出流")
-        values.clear()
-        values.put(MediaStore.Images.Media.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-        bmp.recycle()
-        return Result("相册/Pictures/豆格/$fileName", "Pictures/豆格/$fileName", uri)
     }
 }
