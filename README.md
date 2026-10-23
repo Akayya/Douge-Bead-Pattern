@@ -16,7 +16,7 @@
 | M2 | 图片转图纸（选图 / 裁剪 / 原图网格识别 / 色数限制 / 最近色映射） | ✅ 已完成，模拟器验证通过 |
 | M3 | 去杂点 + 框选裁剪 + 图形边界识别 + 图纸小工具 + 编辑器 + 施工模式 | ✅ 完成：去杂点、框选裁剪、边界识别、29 格分区线、库页长按菜单、取豆清单、减到 N 色、画布变换、PNG 导出、编辑器（画笔/橡皮/油漆桶/吸管/直线/矩形/镜像/撤销/一键替换）、施工模式（全部/逐色/逐行、打勾、进度、防抖落盘） |
 | M4 | 豆数成本统计 + A4 分页 PDF 导出 + 材料单 CSV + 打磨 | ✅ 完成：成本与工时估算、A4 分页 PDF（29/58 格按板对齐）、材料单 CSV、启动图标 |
-| M5 | 豆仓库存（记数量、算缺口、补货成本、CSV 批量导入） | ✅ 完成 |
+| M5 | 豆仓库存（记数量、算缺口、补货成本、CSV 批量导入、拼完确认扣减） | ✅ 完成 |
 | — | 「关于」页 + 自愿赞助通道（静态收款码，不联网、不锁功能） | ✅ 已完成 |
 
 模拟器截图在 `screenshots/`，按里程碑分六层（`m1/`…`m6/`），每层只留这个阶段最能说明问题的几张：M1 骨架与色板、M2 图片转图纸与原图网格识别、M3 编辑器/施工/画布/导出、M4 成本与 A4 PDF（含改版前后的对比图 `pdf-before-page2.png` / `pdf-after-page2.png`）、M5 豆仓库存与撤销、M6 空白画布/库页进度/施工页色号。截图不入库（`.gitignore` 里忽略整个 `screenshots/`）。
@@ -168,7 +168,7 @@
 
 ## 单元测试与去杂点修复（0.6.10）
 
-- 新增 JVM 单元测试（JUnit 4），`./gradlew.bat :app:testDebugUnitTest` 直接跑，不依赖模拟器；截至 0.6.15 是 10 个测试类共 49 个用例，覆盖 HEX 颜色解析、图纸裁剪/旋转/镜像、去杂点、减色、导出尺寸预算、施工进度、像素网格识别、材料单 CSV、PDF 分页、库存 CSV 导入。
+- 新增 JVM 单元测试（JUnit 4），`./gradlew.bat :app:testDebugUnitTest` 直接跑，不依赖模拟器；截至 0.6.16 是 11 个测试类共 54 个用例，覆盖 HEX 颜色解析、图纸裁剪/旋转/镜像、去杂点、减色、导出尺寸预算、施工进度、像素网格识别、材料单 CSV、PDF 分页、库存 CSV 导入、拼完扣减。
 - 把 Android 依赖从纯逻辑里剥出来：新增 `HexColor`（替代 `android.graphics.Color.parseColor`），`PixelGridDetector.detect(IntArray, width, height)` 可脱离 `Bitmap` 测试；识别算法本身与重构前一致。
 - 顺手修了一个真 bug：去杂点用 `argb < 0` 判断「颜色无效」，而所有不透明色（`0xFF……`）在 Int 里都是负数，导致点「去杂点」永远提示「没有找到杂点」。现在改成可空数组判空；单测覆盖了近白噪点、两色混合过渡格，黑眼珠/线条端点仍会保留。
 - 工程目录名含中文时要注意编码：Gradle 给测试 worker 写的 `@argfile` 按 daemon 默认编码写、JVM 启动器按系统编码读。`gradle.properties` 因此用 `-Dfile.encoding=COMPAT`（跟随系统编码）；写死 UTF-8 会报 `ClassNotFoundException`。
@@ -212,6 +212,16 @@
 - 编码：先按严格 UTF-8 读，失败再用 GB18030，Windows 导出的中文 CSV 也能读；文件上限 2 MB。
 - 模拟器验证：5 行测试文件得到 3 个可导入色号、`ZZZ` 未识别、`A2` 非法；确认后 `files/inventory.json` 为 `{"mard221":{"A19":123,"H2":100,"F2":45}}`，色板页计数和提示立刻刷新。另用 GB18030 文件只更新 A19/F2、未提及的 H2 保持原值。真机 SAF 面板未单独验证。
 
+## 拼完扣减库存（0.6.16）
+
+- 施工页打勾到 100% 时自动弹出一次确认框，列出每个色号「用多少 / 库存多少 → 扣后多少」，确认后才改豆仓；点「暂不扣减」不扣，顶部会留一个「扣减…」入口，随时可以再点。
+- 只扣**记过库存**的色号。没记过的色号不算 0，也不扣，确认框里单独提示「另有 N 色 / N 颗没记库存」。
+- 库存不足时扣到 0，不产生负数；确认框和结果提示都会标出缺多少颗。
+- **每张图纸只扣一次**：扣减时间记在 `files/inventory_deductions.json`（按图纸 id），重启 App 或再次完成都不会重复扣。标记随整库备份导出/覆盖恢复；合并导入不搬这个标记（可能多问一次，不会自动重复扣）。
+- 先写「已扣」标记再改库存：万一中途崩溃，最多少扣，不会重复扣。扣错了只能到色板页手动改（确认框里也写了这句）。
+- 已扣过的图纸再编辑（加边、改色、旋转）不会重新计算差额，也不会二次扣减；需要时手动调库存。
+- 模拟器验证：2×2 / A1×2 + A2×2 的测试图纸，A1=5、A2=1 时确认框显示 5→3、1→0（缺 1），确认后 `inventory.json` 为 `{"mard221":{"A1":3,"A2":0}}`；取消不写标记；重启后重进施工页只显示「已扣过」。只记 A1 时确认框只扣 A1，提示 A2 未记库存不扣，结果不新建 A2 键。测试数据已删除，用户原有 9 张图纸未动。
+
 ## 缩略图缓存（0.6.3）
 
 - 库页缩略图不再每帧重画所有格子：`data/PatternThumbCache.kt` 按「尺寸 + 色板 + 色板颜色指纹 + cells 内容哈希」渲染一次 256px 位图，内存 LruCache（8MB）+ `filesDir/thumbs/<id>-<尺寸>-<色板>-<指纹>-<哈希>.png` 双缓存，之后滚动直接贴图。
@@ -226,7 +236,7 @@
 │  └─ src/main/
 │     ├─ java/com/pindou/app/
 │     │  ├─ MainActivity.kt
-│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复）、MaterialListCsv（材料单 CSV）、InventoryCsv（库存 CSV 批量导入）、InventoryStore（豆仓数量）、CostSettings（成本参数）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
+│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复）、MaterialListCsv（材料单 CSV）、InventoryCsv（库存 CSV 批量导入）、InventoryDeduction（拼完扣减计算）、InventoryStore（豆仓数量）、DeductionStore（已扣标记）、CostSettings（成本参数）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
 │     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、about/（关于 + 数据备份）、theme/
 │     ├─ assets/
 │     │  ├─ palette/        mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）
@@ -300,6 +310,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-run.ps1 -Sho
 
 - **记录**：色板页**长按色块** → 库存对话框里填你手上有多少颗（`不追踪` 可以清掉），同一个对话框也能进颜色校准。色块下面会显示数量，0 显示红色的「缺」。
 - **批量导入**：色板页顶部「批量导入 CSV」，按「色号,库存」两列一次记完整箱豆子；先预览再写入，未识别色号会列出来。格式与验证细节见「库存批量导入（0.6.15）」。
+- **拼完扣减**：施工到 100% 会弹确认框，按用量扣已记库存的色号，不足扣到 0；每张图纸只扣一次。细节见「拼完扣减库存（0.6.16）」。
 - **算缺口**：图纸详情页会自动比对——成本卡片里多一行红字「豆仓缺 1 色 / 共 72 颗（补货约 ¥1.44）」，色号明细里每个色号单独标「库存 100 · 缺 72」或「库存 500 · 够」。
 - **关键设计**：**没记过数量的色号不算缺口**（返回 `null` = 不追踪）。否则第一次打开任何图纸都会满屏「缺货」，功能就废了。
 - 数据存 `filesDir/inventory.json`，形如 `{"mard221":{"A19":100}}`；内部用 `SnapshotStateMap`，改完数量界面立刻刷新，不用手动重进。

@@ -39,6 +39,7 @@ object BackupManager {
         "palette_state.json",
         "palette_calibrated.json",
         "inventory.json",
+        "inventory_deductions.json",
         "cost.json",
     )
 

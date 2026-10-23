@@ -127,7 +127,7 @@ fun BackupCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = "备份包含图纸、施工进度、色板开关与校准、豆仓库存、成本设置；缩略图会在恢复后自动重建。",
+                text = "备份包含图纸、施工进度、色板开关与校准、豆仓库存与扣减记录、成本设置；缩略图会在恢复后自动重建。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
@@ -57,6 +60,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.pindou.app.data.DeductionStore
+import com.pindou.app.data.InventoryDeduction
+import com.pindou.app.data.InventoryStore
 import com.pindou.app.data.Palette
 import com.pindou.app.data.Pattern
 import com.pindou.app.data.PatternStore
@@ -78,6 +84,8 @@ private const val MAX_ZOOM = 6f
 fun BuildModeScreen(
     pattern: Pattern,
     palette: Palette,
+    inventory: InventoryStore,
+    deductions: DeductionStore,
     onBack: () -> Unit,
     onPatternChanged: (Pattern) -> Unit,
     minutesPer100: Float = 5f,
@@ -101,6 +109,11 @@ fun BuildModeScreen(
     var scale by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var jumpTick by remember { mutableIntStateOf(0) }
+
+    var deducted by remember(pattern.id) { mutableStateOf(deductions.isDeducted(pattern.id)) }
+    var showDeductDialog by remember(pattern.id) { mutableStateOf(false) }
+    var autoPromptDone by remember(pattern.id) { mutableStateOf(false) }
+    var lastFinished by remember(pattern.id) { mutableIntStateOf(-1) }
 
     val usage = remember(pattern.id) { pattern.usage(palette) }
 
@@ -130,6 +143,41 @@ fun BuildModeScreen(
     val total = pattern.beadCount
     val finished = done.count { it in pattern.cells.indices && pattern.cells[it] >= 0 }
     val remainMinutes = ((total - finished) / 100f * minutesPer100).roundToInt()
+    val complete = total > 0 && finished == total
+
+    fun deductionPlan(): InventoryDeduction.Plan =
+        InventoryDeduction.plan(usage) { code -> inventory.count(pattern.paletteId, code) }
+
+    val deduction = if (complete) deductionPlan() else null
+
+    // 只在本屏内从“没拼完”变成“拼完”的那一刻提示一次；进来时已拼完只显示下方入口。
+    LaunchedEffect(finished, total, deducted) {
+        val nowComplete = total > 0 && finished == total
+        val wasComplete = lastFinished < 0 || (total > 0 && lastFinished == total)
+        lastFinished = finished
+        if (nowComplete && !wasComplete && !deducted && !autoPromptDone &&
+            deductionPlan().trackedColors > 0
+        ) {
+            autoPromptDone = true
+            showDeductDialog = true
+        }
+    }
+
+    fun applyDeduction(plan: InventoryDeduction.Plan) {
+        showDeductDialog = false
+        if (plan.lines.isEmpty()) return
+        // 先落“已扣”标记再改库存：万一中途崩溃，最多少扣，不会重复扣。
+        deductions.mark(pattern.id)
+        inventory.setAll(pattern.paletteId, plan.after)
+        deducted = true
+        val msg = buildString {
+            append("豆仓已扣 ${plan.trackedColors} 色 ${plan.deductedBeads} 颗")
+            if (plan.shortColors > 0) append("；${plan.shortColors} 色库存不足，已扣到 0")
+        }
+        status = msg
+        persist()
+        scope.launch { snackbar.showSnackbar(msg) }
+    }
 
     // 注意：这里必须每次现算，不能提前存成 val——手势 lambda 只在首帧创建一次，
     // 存 val 会让「逐色/逐行」的筛选条件永远停在初始值（切视图后照样能点别的格子）。
@@ -235,6 +283,74 @@ fun BuildModeScreen(
         val code = palette.get(pattern.cells[found])?.code ?: ""
         status = "下一处：第 ${r + 1} 行 · 第 ${c + 1} 列 · $code"
         jumpTick++
+    }
+
+    if (showDeductDialog && deduction != null) {
+        AlertDialog(
+            onDismissRequest = { showDeductDialog = false },
+            title = { Text("从豆仓扣减？") },
+            text = {
+                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                    Text(
+                        "图纸已拼完。按当前豆仓记录扣掉这些色号：",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    deduction.lines.forEach { line ->
+                        val color = palette.get(palette.indexOf(line.code))
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(14.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(Color(color?.argb ?: 0xFFEDEDF2.toInt()))
+                                    .border(1.dp, Color(0x33000000), RoundedCornerShape(3.dp)),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "${line.code} · 用 ${line.needed} 颗",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    "库存 ${line.stock} → ${line.after}" +
+                                        if (line.shortage > 0) " · 缺 ${line.shortage}，扣到 0" else "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (line.shortage > 0) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    if (deduction.untrackedColors > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "另有 ${deduction.untrackedColors} 色 / ${deduction.untrackedBeads} 颗没记库存，不扣。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "每张图纸只扣一次；扣错了请到色板页手动改。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { applyDeduction(deduction) }) { Text("确认扣减") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeductDialog = false }) { Text("暂不扣减") }
+            },
+        )
     }
 
     Scaffold(
@@ -405,6 +521,34 @@ fun BuildModeScreen(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+
+            if (complete) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = when {
+                            deducted -> "豆仓已扣过（每张图纸只扣一次）"
+                            deduction != null && deduction.trackedColors > 0 -> buildString {
+                                append("豆仓可扣 ${deduction.trackedColors} 色 / ${deduction.deductedBeads} 颗")
+                                if (deduction.shortBeads > 0) append("（还缺 ${deduction.shortBeads}）")
+                            }
+                            else -> "没有记过库存的色号，暂不扣减"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (deducted) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (!deducted && deduction != null && deduction.trackedColors > 0) {
+                        TextButton(onClick = { showDeductDialog = true }) { Text("扣减…") }
+                    }
+                }
             }
 
             // 状态行：跳转提示 / 视图限制提示，放这里就不会挡住按钮

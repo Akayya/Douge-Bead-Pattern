@@ -13,6 +13,7 @@ import androidx.compose.ui.platform.LocalContext
 import com.pindou.app.data.PaletteStore
 import com.pindou.app.data.Pattern
 import com.pindou.app.data.CostSettings
+import com.pindou.app.data.DeductionStore
 import com.pindou.app.data.InventoryStore
 import com.pindou.app.data.PatternStore
 import com.pindou.app.data.PatternThumbCache
@@ -43,6 +44,7 @@ fun AppRoot() {
     val context = LocalContext.current
     val store = remember { PaletteStore(context) }
     val inventory = remember { InventoryStore(context) }
+    val deductions = remember { DeductionStore(context) }
     val cost = remember { CostSettings(context) }
     val patterns = remember { mutableStateListOf<Pattern>() }
     var screen by remember { mutableStateOf<Screen>(Screen.Library) }
@@ -142,6 +144,7 @@ fun AppRoot() {
             onBackupImported = {
                 store.reload()
                 inventory.reload()
+                deductions.reload()
                 cost.reload()
                 appScope.launch {
                     val loaded = withContext(Dispatchers.IO) { PatternStore.list(context) }
@@ -177,6 +180,8 @@ fun AppRoot() {
                 BuildModeScreen(
                     pattern = pattern,
                     palette = store.palette(pattern.paletteId),
+                    inventory = inventory,
+                    deductions = deductions,
                     minutesPer100 = cost.minutesPer100,
                     onBack = { screen = Screen.Detail(pattern.id) },
                     onPatternChanged = { updated ->
