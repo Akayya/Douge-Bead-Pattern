@@ -96,7 +96,7 @@ fun LibraryScreen(
     onNewBlank: (Int, Int) -> Unit = { _, _ -> },
     onRename: (Pattern, String) -> Unit = { _, _ -> },
     onDuplicate: (Pattern) -> Unit = {},
-    onDelete: (Pattern) -> Unit = {},
+    onDelete: suspend (Pattern) -> Boolean = { true },
     onRestore: (Pattern) -> Unit = {},
 ) {
     var renameTarget by remember { mutableStateOf<Pattern?>(null) }
@@ -346,11 +346,12 @@ fun LibraryScreen(
             confirmButton = {
                 TextButton(onClick = {
                     val deleted = target
-                    onDelete(deleted)
                     deleteTarget = null
                     scope.launch {
+                        val snapshotted = onDelete(deleted)
                         val result = snackbar.showSnackbar(
-                            message = "已删除「${deleted.name}」",
+                            message = if (snapshotted) "已删除「${deleted.name}」"
+                            else "已删除「${deleted.name}」，但自动快照失败",
                             actionLabel = "撤销",
                             withDismissAction = true,
                             duration = SnackbarDuration.Long,

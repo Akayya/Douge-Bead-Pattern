@@ -60,6 +60,11 @@ fun AboutScreen(
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull() ?: "0.1.0"
     }
+    var dataVersion by remember { mutableIntStateOf(0) }
+    val onDataRestored = {
+        dataVersion += 1
+        onBackupImported()
+    }
 
     Scaffold(
         topBar = {
@@ -99,8 +104,14 @@ fun AboutScreen(
 
             BackupCard(
                 patternCount = patternCount,
-                onImported = onBackupImported,
+                onImported = onDataRestored,
                 showMessage = { message -> scope.launch { snackbar.showSnackbar(message) } },
+            )
+
+            SnapshotCard(
+                refreshKey = dataVersion,
+                showMessage = { message -> scope.launch { snackbar.showSnackbar(message) } },
+                onRestored = onDataRestored,
             )
 
             SupportCard()

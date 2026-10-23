@@ -8,6 +8,7 @@ import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -53,6 +54,13 @@ object BackupManager {
         "豆格备份-" + SimpleDateFormat("yyyyMMdd-HHmm", Locale.getDefault()).format(Date()) + ".zip"
 
     fun export(context: Context, uri: Uri): ExportResult {
+        val output = context.contentResolver.openOutputStream(uri, "w")
+            ?: throw BackupException("无法写入所选位置")
+        return output.use { exportTo(context, it) }
+    }
+
+    /** 写入 zip；返回时会关闭 output。 */
+    fun exportTo(context: Context, output: OutputStream): ExportResult {
         val patternFiles = PatternStore.list(context).mapNotNull { pattern ->
             val file = File(File(context.filesDir, "patterns"), "${pattern.id}.json")
             runCatching { pattern.id to file.readBytes() }.getOrNull()
@@ -64,25 +72,28 @@ object BackupManager {
             .put("createdAt", System.currentTimeMillis())
             .put("patternCount", patternFiles.size)
 
-        val output = context.contentResolver.openOutputStream(uri, "w")
-            ?: throw BackupException("无法写入所选位置")
-        output.use { raw ->
-            ZipOutputStream(BufferedOutputStream(raw)).use { zip ->
-                writeEntry(zip, MANIFEST, manifest.toString(2).toByteArray(Charsets.UTF_8))
-                for ((id, data) in patternFiles) {
-                    writeEntry(zip, "patterns/$id.json", data)
-                }
-                for (name in SETTINGS) {
-                    val file = File(context.filesDir, name)
-                    if (file.exists()) writeEntry(zip, name, file.readBytes())
-                }
+        ZipOutputStream(BufferedOutputStream(output)).use { zip ->
+            writeEntry(zip, MANIFEST, manifest.toString(2).toByteArray(Charsets.UTF_8))
+            for ((id, data) in patternFiles) {
+                writeEntry(zip, "patterns/$id.json", data)
+            }
+            for (file in settingsFiles(context)) {
+                if (file.exists()) writeEntry(zip, file.name, file.readBytes())
             }
         }
         return ExportResult(patternFiles.size)
     }
 
+    fun settingsFiles(context: Context): List<File> = SETTINGS.map { File(context.filesDir, it) }
+
     fun inspect(context: Context, uri: Uri): Info {
-        val entries = readEntries(context, uri)
+        val input = context.contentResolver.openInputStream(uri)
+            ?: throw BackupException("无法读取所选文件")
+        return input.use { inspectFrom(it) }
+    }
+
+    fun inspectFrom(input: InputStream): Info {
+        val entries = readEntries(input)
         val manifest = verifyManifest(entries)
         return Info(
             createdAt = manifest.optLong("createdAt", 0L),
@@ -91,8 +102,28 @@ object BackupManager {
         )
     }
 
+    /** 只读清单，用于快速列出本地快照；不校验整包。 */
+    fun inspectHeader(file: File): Info {
+        val manifest = file.inputStream().use { readManifest(it) }
+        verifyManifestValues(manifest)
+        return Info(
+            createdAt = manifest.optLong("createdAt", 0L),
+            appVersion = manifest.optString("versionName", "?"),
+            patternCount = manifest.optInt("patternCount", 0),
+        )
+    }
+
     fun import(context: Context, uri: Uri, overwrite: Boolean): ImportResult {
-        val entries = readEntries(context, uri)
+        val input = context.contentResolver.openInputStream(uri)
+            ?: throw BackupException("无法读取所选文件")
+        return input.use { importFrom(context, it, overwrite) }
+    }
+
+    fun importFile(context: Context, file: File, overwrite: Boolean): ImportResult =
+        file.inputStream().use { importFrom(context, it, overwrite) }
+
+    fun importFrom(context: Context, input: InputStream, overwrite: Boolean): ImportResult {
+        val entries = readEntries(input)
         verifyManifest(entries)
 
         val patterns = ArrayList<Pattern>()
@@ -241,9 +272,7 @@ object BackupManager {
         }
     }
 
-    private fun readEntries(context: Context, uri: Uri): Map<String, ByteArray> {
-        val input = context.contentResolver.openInputStream(uri)
-            ?: throw BackupException("无法读取所选文件")
+    private fun readEntries(input: InputStream): Map<String, ByteArray> {
         val entries = LinkedHashMap<String, ByteArray>()
         var total = 0L
         try {
@@ -293,10 +322,30 @@ object BackupManager {
     private fun isKnownEntry(name: String): Boolean =
         name == MANIFEST || name in SETTINGS || PATTERN_NAME.matches(name)
 
+    private fun readManifest(input: InputStream): JSONObject {
+        ZipInputStream(BufferedInputStream(input)).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (entry.isDirectory) continue
+                if (entry.name == MANIFEST) {
+                    val raw = readEntry(zip)
+                    return runCatching { JSONObject(String(raw, Charsets.UTF_8)) }.getOrNull()
+                        ?: throw BackupException("备份清单已损坏")
+                }
+            }
+        }
+        throw BackupException("不是豆格的备份文件")
+    }
+
     private fun verifyManifest(entries: Map<String, ByteArray>): JSONObject {
         val raw = entries[MANIFEST] ?: throw BackupException("不是豆格的备份文件")
         val manifest = runCatching { JSONObject(String(raw, Charsets.UTF_8)) }.getOrNull()
             ?: throw BackupException("备份清单已损坏")
+        verifyManifestValues(manifest)
+        return manifest
+    }
+
+    private fun verifyManifestValues(manifest: JSONObject) {
         if (manifest.optString("app") != APP_TAG) {
             throw BackupException("不是豆格的备份文件")
         }
@@ -304,7 +353,6 @@ object BackupManager {
         if (format != FORMAT) {
             throw BackupException("备份格式版本不支持（$format）")
         }
-        return manifest
     }
 
     private fun decodePattern(text: String): Pattern? {

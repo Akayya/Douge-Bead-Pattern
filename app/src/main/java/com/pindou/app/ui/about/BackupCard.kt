@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.pindou.app.data.BackupManager
+import com.pindou.app.data.SnapshotStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -58,6 +59,21 @@ fun BackupCard(
         val uri = pendingUri ?: return
         scope.launch {
             busy = true
+            if (replace) {
+                val safety = withContext(Dispatchers.IO) {
+                    runCatching { SnapshotStore.create(context) }
+                }
+                if (safety.isFailure) {
+                    busy = false
+                    pendingUri = null
+                    pendingInfo = null
+                    confirmOverwrite = false
+                    showMessage(
+                        "恢复前快照失败，已取消恢复：${safety.exceptionOrNull()?.message ?: "未知错误"}",
+                    )
+                    return@launch
+                }
+            }
             val result = withContext(Dispatchers.IO) {
                 runCatching { BackupManager.import(context, uri, replace) }
             }

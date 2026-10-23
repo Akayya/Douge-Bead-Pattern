@@ -168,7 +168,7 @@
 
 ## 单元测试与去杂点修复（0.6.10）
 
-- 新增 JVM 单元测试（JUnit 4），`./gradlew.bat :app:testDebugUnitTest` 直接跑，不依赖模拟器；截至 0.6.17 是 12 个测试类共 59 个用例，覆盖 HEX 颜色解析、图纸裁剪/旋转/镜像、去杂点、减色、导出尺寸预算、施工进度、像素网格识别、材料单 CSV、PDF 分页、库存 CSV 导入、拼完扣减、29/58 板布局。
+- 新增 JVM 单元测试（JUnit 4），`./gradlew.bat :app:testDebugUnitTest` 直接跑，不依赖模拟器；截至 0.6.18 是 13 个测试类共 64 个用例，覆盖 HEX 颜色解析、图纸裁剪/旋转/镜像、去杂点、减色、导出尺寸预算、施工进度、像素网格识别、材料单 CSV、PDF 分页、库存 CSV 导入、拼完扣减、29/58 板布局、快照保留策略。
 - 把 Android 依赖从纯逻辑里剥出来：新增 `HexColor`（替代 `android.graphics.Color.parseColor`），`PixelGridDetector.detect(IntArray, width, height)` 可脱离 `Bitmap` 测试；识别算法本身与重构前一致。
 - 顺手修了一个真 bug：去杂点用 `argb < 0` 判断「颜色无效」，而所有不透明色（`0xFF……`）在 Int 里都是负数，导致点「去杂点」永远提示「没有找到杂点」。现在改成可空数组判空；单测覆盖了近白噪点、两色混合过渡格，黑眼珠/线条端点仍会保留。
 - 工程目录名含中文时要注意编码：Gradle 给测试 worker 写的 `@argfile` 按 daemon 默认编码写、JVM 启动器按系统编码读。`gradle.properties` 因此用 `-Dfile.encoding=COMPAT`（跟随系统编码）；写死 UTF-8 会报 `ClassNotFoundException`。
@@ -186,6 +186,7 @@
 - **合并导入**：现有图纸和设置都不删。备份里与本地同编号的图纸另存副本（名称加「（导入）」）；库存和颜色校准只补本地没记过的色号；色板开关与成本参数只在本地没有对应文件时采用备份值。
 - **覆盖恢复**：先完整校验 zip（清单、图纸 JSON、单元格数量、文件大小/数量上限），确认后把图纸目录整体换掉，再替换设置文件；会清空缩略图缓存。执行前二次确认，提示当前图纸数且不可撤销，建议先导出当前数据。
 - 安全边界：只接受 `patterns/<id>.json` 这种文件名，目录穿越条目直接拒绝；损坏的图纸或设置会让整次导入中止，不做“跳过坏文件继续导入”的半套恢复。
+- 0.6.18 起，覆盖恢复前会自动在本机留一份安全快照；快照本身不进导出备份包。
 - 模拟器验证：9 张图纸导出后与 App 内 JSON 逐字节一致；同库合并得到 17 张（8 张副本 + 1 张恢复），校准/库存只补缺失项、成本与色板开关保持本地；覆盖后图纸回到 9 张、设置全部还原、缩略图 7 张按需重建；损坏 zip 被拒绝且数据不变。真机 SAF 面板尚未验证。
 
 ## 材料单 CSV（0.6.13）
@@ -231,6 +232,18 @@
 - 画布的板分隔线跟随 29/58 选择，切到其它视图后保持；板尺寸是当前施工页的显示设置，不写进图纸文件。
 - 模拟器验证：注入 65×62 全 A1 临时图纸，29 模式 9 块板、58 模式 4 块板及末块 28 颗均与计算一致；切板、逐板进度、越板拦截、长按清板、跨板跳转都实际点过。测试中发现并修复一个真 bug：手势回调里读了组合期缓存的板号，切到 58 板后仍按 29 板过滤，表现为「板内点不动、长按清板无效」；改成在回调里用 `BoardLayout.count(...)` 现算。测试图纸已删除，用户原有 9 张图纸未动。
 
+## 本地自动快照（0.6.18）
+
+- 关于页新增「本地快照」卡片：列表显示时间、图纸数、文件大小，可随时「立即快照」或恢复到某一份。
+- 快照复用整库备份 zip 格式，存在 `filesDir/snapshots/snap-<时间戳>.zip`；最多保留 5 份，超出自动删最旧的。快照只在本机，**不放进导出的备份包**，卸载/换机仍要另外导出备份。
+- 触发时机：
+  - 打开 App 时，如果数据在上次快照之后有改动、且距上一份超过 6 小时，自动留一份；刚装好第一次的示例图纸不会立刻占一份。
+  - 删除图纸前自动留一份（含待删图纸）；快照失败时会提示，撤销仍然可用。
+  - 覆盖恢复（导入备份）前自动留一份；快照创建失败则取消恢复，避免恢复失败还丢掉当前版本。
+- 恢复快照是整库覆盖：图纸、施工进度、色板开关/校准、库存、扣减标记、成本全部回到快照时；恢复前先给当前数据留安全快照，恢复后缩略图按需重建。
+- 数据变更按文件修改时间判断；阈值与保留份数在 `data/SnapshotPolicy.kt`，有 JVM 用例覆盖。
+- 模拟器验证：9 张图纸启动自动生成 1 份；自动 1 份后再手动做 5 份，只保留最新 5 份；无改动重启不重复生成；删除临时图纸后快照包含 10 张，恢复后图纸与施工进度回到删除前（1/1743），再清理回 9 张；SAF 导出/覆盖导入回归通过，覆盖前新增安全快照且列表即时刷新。测试数据已删除，用户原 9 张图纸内容哈希与色板状态完全一致。
+
 ## 缩略图缓存（0.6.3）
 
 - 库页缩略图不再每帧重画所有格子：`data/PatternThumbCache.kt` 按「尺寸 + 色板 + 色板颜色指纹 + cells 内容哈希」渲染一次 256px 位图，内存 LruCache（8MB）+ `filesDir/thumbs/<id>-<尺寸>-<色板>-<指纹>-<哈希>.png` 双缓存，之后滚动直接贴图。
@@ -245,8 +258,8 @@
 │  └─ src/main/
 │     ├─ java/com/pindou/app/
 │     │  ├─ MainActivity.kt
-│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复）、MaterialListCsv（材料单 CSV）、InventoryCsv（库存 CSV 批量导入）、InventoryDeduction（拼完扣减计算）、InventoryStore（豆仓数量）、DeductionStore（已扣标记）、BoardLayout（29/58 拼豆板行列与裁剪计算）、CostSettings（成本参数）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
-│     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、about/（关于 + 数据备份）、theme/
+│     │  ├─ data/           BeadColor/Palette、PaletteStore（色号库存）、Pattern、PatternStore、PatternThumbCache（缩略图缓存）、BackupManager（整库 zip 备份/恢复）、SnapshotPolicy（快照保留策略）、SnapshotStore（本地自动快照）、MaterialListCsv（材料单 CSV）、InventoryCsv（库存 CSV 批量导入）、InventoryDeduction（拼完扣减计算）、InventoryStore（豆仓数量）、DeductionStore（已扣标记）、BoardLayout（29/58 拼豆板行列与裁剪计算）、CostSettings（成本参数）、SamplePatterns、PixelGrid（认原图格子）、ImageToPattern（取色成图）、PatternCleaner（去杂点）
+│     │  └─ ui/             AppRoot（页面切换）、PatternCanvas、library/、palette/、pattern/、about/（关于 + 数据备份 + 本地快照）、theme/
 │     ├─ assets/
 │     │  ├─ palette/        mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）
 │     │  ├─ support/        赞助二维码：alipay.png、wechat.png（自己放，见该目录 README.txt）

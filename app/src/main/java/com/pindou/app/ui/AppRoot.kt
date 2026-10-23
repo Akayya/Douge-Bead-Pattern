@@ -18,6 +18,7 @@ import com.pindou.app.data.InventoryStore
 import com.pindou.app.data.PatternStore
 import com.pindou.app.data.PatternThumbCache
 import com.pindou.app.data.SamplePatterns
+import com.pindou.app.data.SnapshotStore
 import com.pindou.app.ui.about.AboutScreen
 import com.pindou.app.ui.build.BuildModeScreen
 import com.pindou.app.ui.editor.PatternEditorScreen
@@ -54,14 +55,24 @@ fun AppRoot() {
     BackHandler(enabled = screen != Screen.Library) { screen = Screen.Library }
 
     LaunchedEffect(Unit) {
+        var seeded = false
         val loaded = withContext(Dispatchers.IO) {
-            if (PatternStore.list(context).isEmpty()) {
+            val existing = PatternStore.list(context)
+            if (existing.isEmpty()) {
+                seeded = true
                 SamplePatterns.heart(store.current)?.let { PatternStore.save(context, it) }
+                PatternStore.list(context)
+            } else {
+                existing
             }
-            PatternStore.list(context)
         }
         patterns.clear()
         patterns.addAll(loaded)
+        if (!seeded && loaded.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                runCatching { SnapshotStore.maybeAutoSnapshot(context) }
+            }
+        }
     }
 
     when (val current = screen) {
@@ -117,9 +128,13 @@ fun AppRoot() {
                 patterns.add(0, copy)
             },
             onDelete = { p ->
+                val snapshotted = withContext(Dispatchers.IO) {
+                    runCatching { SnapshotStore.create(context) }.isSuccess
+                }
                 PatternStore.delete(context, p.id)
                 PatternThumbCache.delete(context, p.id)
                 patterns.removeAll { it.id == p.id }
+                snapshotted
             },
             onRestore = { p ->
                 PatternStore.save(context, p)
