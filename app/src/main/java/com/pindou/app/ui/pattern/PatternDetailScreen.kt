@@ -40,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -94,6 +95,8 @@ fun PatternDetailScreen(
     var priceText by remember { mutableStateOf("") }
     var minutesText by remember { mutableStateOf("") }
     var exportingPdf by remember { mutableStateOf(false) }
+    var showPdfOptions by remember { mutableStateOf(false) }
+    var pdfSpan by remember { mutableIntStateOf(PatternPdf.BOARD_SMALL) }
     var exportingCsv by remember { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     var sharing by remember { mutableStateOf(false) }
@@ -151,6 +154,28 @@ fun PatternDetailScreen(
         )
         commit(updated)
         scope.launch { snackbar.showSnackbar("$label，施工进度已清空") }
+    }
+
+    fun exportPdf(span: Int) {
+        if (exportingPdf) return
+        exportingPdf = true
+        scope.launch {
+            val res = withContext(Dispatchers.Default) {
+                try {
+                    PatternPdf.export(context, current, palette, cost, span)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            exportingPdf = false
+            if (res == null) {
+                snackbar.showSnackbar("导出失败，检查存储空间")
+            } else {
+                snackbar.showSnackbar("已导出 ${res.pages} 页：${res.savedAs}")
+            }
+        }
     }
 
     Scaffold(
@@ -392,30 +417,12 @@ fun PatternDetailScreen(
             item {
                 OutlinedButton(
                     onClick = {
-                        if (exportingPdf) return@OutlinedButton
-                        exportingPdf = true
-                        scope.launch {
-                            val res = withContext(Dispatchers.Default) {
-                                PatternPdf.export(context, current, palette, cost)
-                            }
-                            exportingPdf = false
-                            if (res == null) {
-                                snackbar.showSnackbar("导出失败，检查存储空间")
-                            } else {
-                                snackbar.showSnackbar("已导出 ${res.pages} 页：${res.savedAs}")
-                            }
-                        }
+                        if (!exportingPdf) showPdfOptions = true
                     },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !exportingPdf,
                 ) {
-                    Text(
-                        if (exportingPdf) {
-                            "生成 PDF 中…"
-                        } else {
-                            "导出 A4 PDF（共 ${PatternPdf.pageCount(current)} 页）"
-                        },
-                    )
+                    Text(if (exportingPdf) "生成 PDF 中…" else "导出 A4 PDF")
                 }
             }
 
@@ -521,6 +528,74 @@ fun PatternDetailScreen(
                 Spacer(Modifier.height(24.dp))
             }
         }
+    }
+
+    if (showPdfOptions) {
+        AlertDialog(
+            onDismissRequest = { showPdfOptions = false },
+            title = { Text("导出 A4 施工图") },
+            text = {
+                Column {
+                    Text(
+                        "按拼豆板分页，页边不会切在板中间；不足一板的末页保持同样格子大小。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        Modifier.fillMaxWidth().clickable { pdfSpan = PatternPdf.BOARD_SMALL }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = pdfSpan == PatternPdf.BOARD_SMALL,
+                            onClick = { pdfSpan = PatternPdf.BOARD_SMALL },
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Column {
+                            Text("每页 29 × 29", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "单块板 · 共 ${PatternPdf.pageCount(current, PatternPdf.BOARD_SMALL)} 页" +
+                                    " · 格子大，印出色号",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().clickable { pdfSpan = PatternPdf.BOARD_LARGE }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = pdfSpan == PatternPdf.BOARD_LARGE,
+                            onClick = { pdfSpan = PatternPdf.BOARD_LARGE },
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Column {
+                            Text("每页 58 × 58", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "2×2 块板 · 共 ${PatternPdf.pageCount(current, PatternPdf.BOARD_LARGE)} 页" +
+                                    " · 省纸，不印色号字",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showPdfOptions = false
+                        exportPdf(pdfSpan)
+                    },
+                ) { Text("导出") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPdfOptions = false }) { Text("取消") }
+            },
+        )
     }
 
     if (showClean) {

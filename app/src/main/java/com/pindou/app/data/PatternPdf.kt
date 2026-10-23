@@ -20,40 +20,41 @@ import kotlin.math.ceil
 
 /**
  * A4 施工图 PDF：
- * 第 1 页是总览 + 色号清单（含成本），后面按 A4 切成若干页图纸，
+ * 第 1 页是总览 + 色号清单（含成本），后面按拼豆板切块，
+ * 每页固定 29×29（一块板）或 58×58（2×2 块板），页边界与板边界对齐，
  * 每页有页码、行列范围和拼接线，方便逐页拼起来施工。
  */
 object PatternPdf {
 
     data class Result(val savedAs: String, val pages: Int)
 
+    const val BOARD_SMALL = 29
+    const val BOARD_LARGE = 58
+
     private const val A4_W = 595
     private const val A4_H = 842
     private const val MARGIN = 26f
     private const val HEADER = 44f
     private const val FOOTER = 26f
-    private const val CELL = 15f
-
-    // 每页能放下多少格
-    private val perPageCols = ((A4_W - MARGIN * 2) / CELL).toInt()
-    private val perPageRows = ((A4_H - MARGIN * 2 - HEADER - FOOTER) / CELL).toInt()
 
     fun export(
         context: Context,
         pattern: Pattern,
         palette: Palette,
         cost: CostSettings,
+        boardSpan: Int = BOARD_SMALL,
     ): Result? {
+        val span = normalizeSpan(boardSpan)
         val usage = pattern.usage(palette)
         val doc = PdfDocument()
         val text = Paint().apply { isAntiAlias = true; color = Color.BLACK }
         val fill = Paint().apply { isAntiAlias = false; style = Paint.Style.FILL }
 
         try {
-            drawSummary(doc, pattern, usage, cost, text, fill)
+            drawSummary(doc, pattern, usage, cost, span, text, fill)
 
-            val tilesX = ceil(pattern.width.toFloat() / perPageCols).toInt()
-            val tilesY = ceil(pattern.height.toFloat() / perPageRows).toInt()
+            val tilesX = ceil(pattern.width.toFloat() / span).toInt()
+            val tilesY = ceil(pattern.height.toFloat() / span).toInt()
             val totalTiles = tilesX * tilesY
 
             var index = 0
@@ -65,7 +66,7 @@ object PatternPdf {
                     drawTile(
                         page.canvas, pattern, palette, text, fill,
                         pageNo = index, pageTotal = totalTiles,
-                        tileX = tx, tileY = ty,
+                        tileX = tx, tileY = ty, span = span,
                     )
                     doc.finishPage(page)
                 }
@@ -81,6 +82,7 @@ object PatternPdf {
         pattern: Pattern,
         usage: List<ColorUsage>,
         cost: CostSettings,
+        span: Int,
         text: Paint,
         fill: Paint,
     ) {
@@ -102,8 +104,15 @@ object PatternPdf {
                 "  |  预计 ${CostSettings.duration(cost.minutesOf(pattern.beadCount))}",
             MARGIN, y, text,
         )
+        y += 14f
+        text.textSize = 8.5f
+        c.drawText(
+            "分页：每页 ${span}×${span}（${spanTitle(span)}），" +
+                "共 ${pageCount(pattern.width, pattern.height, span) - 1} 页图纸",
+            MARGIN, y, text,
+        )
         text.color = Color.BLACK
-        y += 18f
+        y += 16f
         fill.color = Color.parseColor("#33000000")
         c.drawRect(MARGIN, y, A4_W - MARGIN, y + 0.8f, fill)
         y += 16f
@@ -151,7 +160,7 @@ object PatternPdf {
         text.color = Color.GRAY
         val footY = A4_H - MARGIN
         c.drawText("第 1 页 · 清单", MARGIN, footY, text)
-        c.drawText("后面每页是 A4 分块图纸，按页码顺序拼", A4_W - MARGIN - 190f, footY, text)
+        c.drawText("后面每页是 ${span}×${span}（${spanTitle(span)}），按页码顺序拼", A4_W - MARGIN - 240f, footY, text)
         doc.finishPage(page)
     }
 
@@ -165,11 +174,21 @@ object PatternPdf {
         pageTotal: Int,
         tileX: Int,
         tileY: Int,
+        span: Int,
     ) {
-        val x0 = tileX * perPageCols
-        val y0 = tileY * perPageRows
-        val cols = minOf(perPageCols, pattern.width - x0)
-        val rows = minOf(perPageRows, pattern.height - y0)
+        val x0 = tileX * span
+        val y0 = tileY * span
+        val cols = minOf(span, pattern.width - x0)
+        val rows = minOf(span, pattern.height - y0)
+
+        val availW = A4_W - MARGIN * 2
+        val availH = A4_H - MARGIN * 2 - HEADER - FOOTER
+        // 整页按完整板宽排版：不足一板的末页也保持同样的格子和原点，拼页时不会错位
+        val cell = minOf(availW / span, availH / span)
+        val board = span * cell
+        val gridLeft = MARGIN + (availW - board) / 2f
+        // 各页统一从页眉下方起笔，末页不足一板时也保持相同原点，拼页不会错位
+        val gridTop = MARGIN + HEADER + 8f
 
         // 页眉
         text.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
@@ -180,23 +199,21 @@ object PatternPdf {
         text.textSize = 9f
         text.color = Color.DKGRAY
         c.drawText(
-            "图纸 $pageNo / $pageTotal · 列 ${x0 + 1}–${x0 + cols} · 行 ${y0 + 1}–${y0 + rows}",
+            "图纸 $pageNo / $pageTotal · 列 ${x0 + 1}–${x0 + cols} · 行 ${y0 + 1}–${y0 + rows}" +
+                " · 每页 $span 格",
             MARGIN, MARGIN + 26f, text,
         )
         text.color = Color.BLACK
-
-        val gridTop = MARGIN + HEADER
-        val gridLeft = MARGIN
 
         // 格子
         for (y in 0 until rows) {
             for (x in 0 until cols) {
                 val v = pattern.cells[(y0 + y) * pattern.width + (x0 + x)]
-                val left = gridLeft + x * CELL
-                val top = gridTop + y * CELL
+                val left = gridLeft + x * cell
+                val top = gridTop + y * cell
                 if (v >= 0) {
                     fill.color = palette.get(v)?.argb ?: Color.WHITE
-                    c.drawRect(left, top, left + CELL, top + CELL, fill)
+                    c.drawRect(left, top, left + cell, top + cell, fill)
                 }
             }
         }
@@ -210,9 +227,9 @@ object PatternPdf {
             for (x in 0 until cols) {
                 val v = pattern.cells[(y0 + y) * pattern.width + (x0 + x)]
                 if (v >= 0) continue
-                val left = gridLeft + x * CELL
-                val top = gridTop + y * CELL
-                c.drawRect(left, top, left + CELL, top + CELL, emptyFill)
+                val left = gridLeft + x * cell
+                val top = gridTop + y * cell
+                c.drawRect(left, top, left + cell, top + cell, emptyFill)
             }
         }
 
@@ -230,18 +247,18 @@ object PatternPdf {
             color = Color.parseColor("#88101018")
         }
         for (gx in 0..cols) {
-            val px = gridLeft + gx * CELL
+            val px = gridLeft + gx * cell
             val boardLine = (x0 + gx) % 29 == 0 && gx != 0
             c.drawLine(
-                px, gridTop, px, gridTop + rows * CELL,
+                px, gridTop, px, gridTop + rows * cell,
                 if (boardLine) thick else thin,
             )
         }
         for (gy in 0..rows) {
-            val py = gridTop + gy * CELL
+            val py = gridTop + gy * cell
             val boardLine = (y0 + gy) % 29 == 0 && gy != 0
             c.drawLine(
-                gridLeft, py, gridLeft + cols * CELL, py,
+                gridLeft, py, gridLeft + cols * cell, py,
                 if (boardLine) thick else thin,
             )
         }
@@ -257,7 +274,7 @@ object PatternPdf {
         while (cxTick < cols) {
             c.drawText(
                 "${x0 + cxTick + 1}",
-                gridLeft + cxTick * CELL + CELL / 2f,
+                gridLeft + cxTick * cell + cell / 2f,
                 gridTop - 4f,
                 tick,
             )
@@ -269,17 +286,17 @@ object PatternPdf {
             c.drawText(
                 "${y0 + ryTick + 1}",
                 gridLeft - 3f,
-                gridTop + ryTick * CELL + CELL * 0.7f,
+                gridTop + ryTick * cell + cell * 0.7f,
                 tick,
             )
             ryTick += 5
         }
 
         // 色号字（格子够大时才画）
-        if (CELL >= 13f) {
+        if (cell >= 13f) {
             val code = Paint().apply {
                 isAntiAlias = true
-                textSize = CELL * 0.42f
+                textSize = cell * 0.42f
                 color = Color.parseColor("#66000000")
                 textAlign = Paint.Align.CENTER
             }
@@ -288,8 +305,8 @@ object PatternPdf {
                     val v = pattern.cells[(y0 + y) * pattern.width + (x0 + x)]
                     if (v < 0) continue
                     val cc = palette.get(v) ?: continue
-                    val cx = gridLeft + x * CELL + CELL / 2f
-                    val cy = gridTop + y * CELL + CELL / 2f + code.textSize / 3f
+                    val cx = gridLeft + x * cell + cell / 2f
+                    val cy = gridTop + y * cell + cell / 2f + code.textSize / 3f
                     c.drawText(cc.code, cx, cy, code)
                 }
             }
@@ -339,10 +356,20 @@ object PatternPdf {
         return Result(savedAs = "下载/豆格/$fileName", pages = pages)
     }
 
-    /** 供界面预估页数用，不用真的生成。 */
-    fun pageCount(pattern: Pattern): Int {
-        val tilesX = ceil(pattern.width.toFloat() / perPageCols).toInt()
-        val tilesY = ceil(pattern.height.toFloat() / perPageRows).toInt()
+    /** 供界面预估页数用，不用真的生成。返回含第 1 页清单在内的总页数。 */
+    fun pageCount(pattern: Pattern, boardSpan: Int = BOARD_SMALL): Int =
+        pageCount(pattern.width, pattern.height, boardSpan)
+
+    internal fun pageCount(width: Int, height: Int, boardSpan: Int): Int {
+        val span = normalizeSpan(boardSpan)
+        val tilesX = ceil(width.toFloat() / span).toInt()
+        val tilesY = ceil(height.toFloat() / span).toInt()
         return 1 + tilesX * tilesY
     }
+
+    private fun normalizeSpan(boardSpan: Int): Int =
+        if (boardSpan == BOARD_LARGE) BOARD_LARGE else BOARD_SMALL
+
+    private fun spanTitle(span: Int): String =
+        if (span == BOARD_LARGE) "2×2 块拼豆板" else "单块拼豆板"
 }
