@@ -1,5 +1,6 @@
 package com.pindou.app.ui.library
 
+import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -48,6 +49,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -65,6 +67,20 @@ private enum class LibrarySort(val label: String) {
     Created("最近创建"),
     Name("名称"),
     Beads("豆数"),
+}
+
+private const val PREFS_NAME = "library_prefs"
+private const val KEY_SORT = "sort"
+
+private fun readSort(context: Context): LibrarySort {
+    val saved = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getString(KEY_SORT, null)
+    return LibrarySort.entries.firstOrNull { it.name == saved } ?: LibrarySort.Updated
+}
+
+private fun saveSort(context: Context, sort: LibrarySort) {
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit().putString(KEY_SORT, sort.name).apply()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,7 +105,8 @@ fun LibraryScreen(
     var blankW by remember { mutableStateOf("29") }
     var blankH by remember { mutableStateOf("29") }
     var query by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf(LibrarySort.Updated) }
+    val context = LocalContext.current
+    var sort by remember { mutableStateOf(readSort(context)) }
     var showSort by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -225,6 +242,7 @@ fun LibraryScreen(
                                     },
                                     onClick = {
                                         sort = option
+                                        saveSort(context, option)
                                         showSort = false
                                     },
                                 )

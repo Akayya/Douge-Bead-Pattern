@@ -34,6 +34,16 @@ class Palette(
 
     val groupSizes: Map<String, Int> = colors.groupingBy { it.group }.eachCount()
 
+    /** 实际颜色指纹：校准后变化，用来隔离缩略图缓存；颜色不变就复用旧图。 */
+    val colorsFingerprint: String by lazy {
+        var hash = 0xcbf29ce484222325UL
+        for (color in colors) {
+            hash = fnv1a(hash, color.code)
+            hash = fnv1a(hash, color.hex)
+        }
+        hash.toString(16)
+    }
+
     companion object {
         const val ASSET_221 = "palette/mard221.json"
         const val ASSET_291 = "palette/mard291.json"
@@ -53,6 +63,12 @@ class Palette(
             return Palette(root.getString("id"), root.getString("title"), groups, colors)
         }
     }
+}
+
+private fun fnv1a(hash: ULong, text: String): ULong {
+    var h = hash
+    for (ch in text) h = (h xor ch.code.toULong()) * 0x100000001b3UL
+    return h
 }
 
 /**
@@ -144,9 +160,15 @@ class PaletteStore(private val context: Context) {
         if (hex == null) overrides.remove(code) else overrides.put(code, hex)
         cache.remove(id)
         current = loadPalette(id)
-        PatternThumbCache.clear(context)
         persistCalibration()
     }
+
+    /** 当前色板里改过颜色的色号数；缩略图缓存靠颜色指纹自己失效，不再全量重画。 */
+    val calibratedCount: Int
+        get() {
+            val overrides = calibration.optJSONObject(current.id) ?: return 0
+            return current.colors.count { overrides.optString(it.code, "").isNotEmpty() }
+        }
 
     fun originalHex(code: String): String? {
         val base = basePalette(current.id)

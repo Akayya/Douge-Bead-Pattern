@@ -100,10 +100,11 @@ fun PatternCanvas(
 fun PatternThumb(pattern: Pattern, palette: Palette, size: Dp, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val cellsHash = pattern.cells.contentHashCode()
-    var bitmap by remember(pattern.id, cellsHash) {
-        mutableStateOf(PatternThumbCache.memoryGet(pattern))
+    val paletteKey = palette.colorsFingerprint
+    var bitmap by remember(pattern.id, cellsHash, paletteKey) {
+        mutableStateOf(PatternThumbCache.memoryGet(pattern, palette))
     }
-    LaunchedEffect(pattern.id, cellsHash, palette) {
+    LaunchedEffect(pattern.id, cellsHash, paletteKey) {
         val cached = PatternThumbCache.load(context, pattern, palette)
         if (cached != null) bitmap = cached
     }

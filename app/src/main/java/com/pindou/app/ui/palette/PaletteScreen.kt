@@ -73,7 +73,11 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
                     Column {
                         Text("色板", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "${palette.title} · 已有 ${store.enabledCount} / ${palette.count} 色",
+                            text = buildString {
+                                append("${palette.title} · 已有 ${store.enabledCount} / ${palette.count} 色")
+                                val calibrated = store.calibratedCount
+                                if (calibrated > 0) append(" · 校准 $calibrated 色")
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -151,6 +155,7 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
                         color = color,
                         enabled = store.isEnabled(color.code),
                         stock = inventory.count(palette.id, color.code),
+                        calibrated = store.calibratedHex(color.code) != null,
                         onToggle = { store.toggle(color.code) },
                         onLongPress = {
                             editColor = color
@@ -166,6 +171,8 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
     if (target != null) {
         StockDialog(
             color = target,
+            calibrated = store.calibratedHex(target.code) != null,
+            originalHex = store.originalHex(target.code),
             text = editCount,
             onTextChange = { editCount = it.filter(Char::isDigit).take(6) },
             onDismiss = { editColor = null },
@@ -271,6 +278,8 @@ fun PaletteScreen(store: PaletteStore, inventory: InventoryStore, onBack: () -> 
 @Composable
 private fun StockDialog(
     color: BeadColor,
+    calibrated: Boolean,
+    originalHex: String?,
     text: String,
     onTextChange: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -288,6 +297,14 @@ private fun StockDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (calibrated) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "已校准（原始 ${originalHex ?: "-"}）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = text,
@@ -299,7 +316,9 @@ private fun StockDialog(
                 TextButton(
                     onClick = onCalibrate,
                     contentPadding = PaddingValues(0.dp),
-                ) { Text("屏幕颜色和实物对不上？校准…") }
+                ) {
+                    Text(if (calibrated) "已校准 · 重新校准…" else "屏幕颜色和实物对不上？校准…")
+                }
             }
         },
         confirmButton = { TextButton(onClick = onSave) { Text("保存") } },
@@ -317,6 +336,7 @@ private fun ColorCell(
     color: BeadColor,
     enabled: Boolean,
     stock: Int?,
+    calibrated: Boolean,
     onToggle: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -335,7 +355,20 @@ private fun ColorCell(
                     color = if (enabled) outline.copy(alpha = 0.25f) else MaterialTheme.colorScheme.error,
                     shape = RoundedCornerShape(10.dp),
                 ),
-        )
+        ) {
+            if (calibrated) {
+                Text(
+                    text = "校",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(3.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 3.dp, vertical = 1.dp),
+                )
+            }
+        }
         Spacer(Modifier.height(2.dp))
         Text(
             text = color.code,

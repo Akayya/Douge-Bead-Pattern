@@ -15,6 +15,8 @@ import java.io.FileOutputStream
 /**
  * 库页缩略图缓存：按图纸内容渲染一次 256px 位图，内存与 filesDir/thumbs 各存一份。
  * 施工打勾只会改 updatedAt，cells 哈希不变，所以不会反复重建。
+ * key 里带色板颜色指纹：校准后旧图自动失效，不再需要全量 clear；
+ * 缓存改成在图纸实际显示时懒重建，旧指纹文件在下次渲染同一张图纸时清掉。
  */
 object PatternThumbCache {
 
@@ -29,16 +31,16 @@ object PatternThumbCache {
     private fun dir(context: Context): File =
         File(context.filesDir, "thumbs").apply { if (!exists()) mkdirs() }
 
-    private fun key(pattern: Pattern): String {
+    private fun key(pattern: Pattern, palette: Palette): String {
         val hash = pattern.cells.contentHashCode().toUInt().toString(16)
-        return "${pattern.id}-${pattern.width}x${pattern.height}-${pattern.paletteId}-$hash"
+        return "${pattern.id}-${pattern.width}x${pattern.height}-${pattern.paletteId}-${palette.colorsFingerprint}-$hash"
     }
 
     /** 只在内存里查，不读盘，供首帧决定是否还需要占位绘制。 */
-    fun memoryGet(pattern: Pattern): Bitmap? = memory.get(key(pattern))
+    fun memoryGet(pattern: Pattern, palette: Palette): Bitmap? = memory.get(key(pattern, palette))
 
     suspend fun load(context: Context, pattern: Pattern, palette: Palette): Bitmap? {
-        val k = key(pattern)
+        val k = key(pattern, palette)
         memory.get(k)?.let { return it }
         return withContext(Dispatchers.IO) {
             renderLock.withLock {
@@ -73,12 +75,6 @@ object PatternThumbCache {
             .filter { it.startsWith("$id-") }
             .forEach { memory.remove(it) }
         dir(context).listFiles { f -> f.isFile && f.name.startsWith("$id-") }?.forEach { it.delete() }
-    }
-
-    /** 色板校准改了颜色，缓存 key 里没有颜色信息，只能全部重画。 */
-    fun clear(context: Context) {
-        memory.evictAll()
-        dir(context).listFiles { f -> f.isFile }?.forEach { it.delete() }
     }
 
     private fun render(pattern: Pattern, palette: Palette): Bitmap {
