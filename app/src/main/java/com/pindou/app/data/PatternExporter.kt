@@ -218,7 +218,7 @@ object PatternExporter {
 
     private fun save(context: Context, bmp: Bitmap, fileName: String, cellPx: Int): Result {
         try {
-            // minSdk 31：只用 MediaStore，不再有老系统兜底分支
+            // minSdk 30：MediaStore 分区存储从 API 29 起可用，不需要存储权限
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
                 put(MediaStore.Images.Media.MIME_TYPE, "image/png")

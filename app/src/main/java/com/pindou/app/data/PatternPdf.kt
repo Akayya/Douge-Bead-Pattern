@@ -333,7 +333,7 @@ object PatternPdf {
         val fileName = "豆格-$safeName-$stamp.pdf"
         val pages = doc.pages.size
 
-        // minSdk 31：只用 MediaStore.Downloads
+        // minSdk 30：MediaStore.Downloads 从 API 29 起可用
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
             put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")

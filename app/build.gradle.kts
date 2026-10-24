@@ -9,10 +9,10 @@ android {
 
     defaultConfig {
         applicationId = "com.pindou.app"
-        minSdk = 31
+        minSdk = 30
         targetSdk = 37
-        versionCode = 28
-        versionName = "0.6.21"
+        versionCode = 29
+        versionName = "0.6.22"
     }
 
     buildFeatures {
