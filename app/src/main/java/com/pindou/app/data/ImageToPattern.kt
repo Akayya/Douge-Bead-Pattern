@@ -1,10 +1,13 @@
 package com.pindou.app.data
 
 import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.RectF
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * 图片转图纸。
@@ -32,6 +35,13 @@ object ImageToPattern {
      * 0.18 → 只取格心 64%，避开抗锯齿边缘；太小会带回灰边，太大细描边可能被切。
      */
     private const val INSET_RATIO = 0.18f
+
+    /**
+     * 取像素的绝对上限。实际还会按输出格数收紧到每格 8×8 个采样点：
+     * 4000 万像素的照片整张取出来光 IntArray 就 160MB，手机必 OOM。
+     */
+    private const val MAX_SAMPLE_PIXELS = 2_000_000
+    private const val SAMPLES_PER_CELL = 8
 
     data class Result(
         val width: Int,
@@ -64,16 +74,10 @@ object ImageToPattern {
         val candidates = if (allowed.isEmpty()) IntArray(palette.count) { it } else allowed
         if (candidates.isEmpty()) return null
 
-        val cropped = cropBitmap(source, crop) ?: return null
-        // 注意：裁剪整张图时 createBitmap 会原样返回 source，绝不能 recycle（会崩在渲染上）
-        val croppedIsSource = cropped === source
-        val cw = cropped.width
-        val ch = cropped.height
-        if (cw < 1 || ch < 1) return null
-
-        val pixels = IntArray(cw * ch)
-        cropped.getPixels(pixels, 0, cw, 0, 0, cw, ch)
-        if (!croppedIsSource) cropped.recycle()
+        val bounds = cropRect(source, crop) ?: return null
+        val croppedW = bounds.width()
+        val croppedH = bounds.height()
+        if (croppedW < 1 || croppedH < 1) return null
 
         val useGrid = grid != null && grid.cols >= 2 && grid.rows >= 2
         val outW: Int
@@ -82,19 +86,60 @@ object ImageToPattern {
             outW = grid!!.cols
             outH = grid!!.rows
         } else {
-            val (w, h) = targetSize(cw, ch, longSide)
+            val (w, h) = targetSize(croppedW, croppedH, longSide)
             outW = w
             outH = h
         }
         if (outW < 1 || outH < 1) return null
 
+        // 采样分辨率跟着输出格数走：每格 8×8 个点足够区分主色和均值，
+        // 拖尺寸滑块时也不用每次把几千万像素重读一遍。
+        val cap = min(
+            MAX_SAMPLE_PIXELS.toLong(),
+            max(96, outW * SAMPLES_PER_CELL).toLong() * max(96, outH * SAMPLES_PER_CELL),
+        )
+        val full = bounds.left == 0 && bounds.top == 0 &&
+            bounds.right == source.width && bounds.bottom == source.height
+        val region: Bitmap
+        var scale = 1f
+        if (croppedW.toLong() * croppedH > cap) {
+            // 裁剪和缩放一次做完：先 createBitmap 裁出整块再缩放的话，
+            // 中间那张大图本身就可能是几十 MB。
+            val factor = sqrt(cap.toDouble() / (croppedW.toDouble() * croppedH)).toFloat()
+            val nw = max(1, (croppedW * factor).roundToInt())
+            val nh = max(1, (croppedH * factor).roundToInt())
+            scale = nw.toFloat() / croppedW
+            val matrix = Matrix().apply {
+                setScale(scale, nh.toFloat() / croppedH)
+            }
+            region = runCatching {
+                Bitmap.createBitmap(source, bounds.left, bounds.top, croppedW, croppedH, matrix, true)
+            }.getOrNull() ?: return null
+        } else if (full) {
+            region = source
+        } else {
+            region = runCatching {
+                Bitmap.createBitmap(source, bounds.left, bounds.top, croppedW, croppedH)
+            }.getOrNull() ?: return null
+        }
+        val cw = region.width
+        val ch = region.height
+        if (cw < 1 || ch < 1) {
+            if (region !== source) region.recycle()
+            return null
+        }
+
+        val pixels = IntArray(cw * ch)
+        region.getPixels(pixels, 0, cw, 0, 0, cw, ch)
+        if (region !== source) region.recycle()
+
         // 每格取一个代表色（主色优先，照片退回平均色）
         val rep = IntArray(outW * outH)
         val counter = HashMap<Int, Int>(256)
-        val stepX = if (useGrid) grid!!.cellX else cw.toFloat() / outW
-        val stepY = if (useGrid) grid!!.cellY else ch.toFloat() / outH
-        val originX = if (useGrid) grid!!.offsetX.toFloat() else 0f
-        val originY = if (useGrid) grid!!.offsetY.toFloat() else 0f
+        val stepX = if (useGrid) grid!!.cellX * scale else cw.toFloat() / outW
+        val stepY = if (useGrid) grid!!.cellY * scale else ch.toFloat() / outH
+        val originX = if (useGrid) grid!!.offsetX * scale else 0f
+        val originY = if (useGrid) grid!!.offsetY * scale else 0f
         // 按原图 1:1 采样时，格子边界那一两圈像素常常是抗锯齿/缩放的混合色，
         // 取格心 64% 的区域能避开它们；否则描边外侧会拖出一圈灰边。
         val insetX = if (useGrid) (stepX * INSET_RATIO).roundToInt() else 0
@@ -224,14 +269,20 @@ object ImageToPattern {
     }
 
     /** 裁剪区（归一化）→ 像素矩形，至少 1×1，且不越界。 */
-    internal fun cropBitmap(source: Bitmap, crop: RectF): Bitmap? {
+    internal fun cropRect(source: Bitmap, crop: RectF): Rect? {
         val bw = source.width
         val bh = source.height
+        if (bw < 1 || bh < 1) return null
         val left = (crop.left.coerceIn(0f, 1f) * bw).roundToInt().coerceIn(0, bw - 1)
         val top = (crop.top.coerceIn(0f, 1f) * bh).roundToInt().coerceIn(0, bh - 1)
         val right = (crop.right.coerceIn(0f, 1f) * bw).roundToInt().coerceIn(left + 1, bw)
         val bottom = (crop.bottom.coerceIn(0f, 1f) * bh).roundToInt().coerceIn(top + 1, bh)
-        return runCatching { Bitmap.createBitmap(source, left, top, right - left, bottom - top) }.getOrNull()
+        return Rect(left, top, right, bottom)
+    }
+
+    internal fun cropBitmap(source: Bitmap, crop: RectF): Bitmap? {
+        val r = cropRect(source, crop) ?: return null
+        return runCatching { Bitmap.createBitmap(source, r.left, r.top, r.width(), r.height()) }.getOrNull()
     }
 
     /** 长边固定为 longSide，短边按比例取整，避免 1 格宽/高的退化情况。 */

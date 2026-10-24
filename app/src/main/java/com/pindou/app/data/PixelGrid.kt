@@ -3,6 +3,7 @@ package com.pindou.app.data
 import android.graphics.Bitmap
 import android.graphics.RectF
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -41,6 +42,10 @@ object PixelGridDetector {
     }
 
     private const val MAX_SIDE = 240
+    private const val MIN_CELL = 2.8f
+    // 真实网格的边界能量集中度实测 3 以上；照片的平滑边缘只有 1.0–1.2。
+    private const val MIN_CONCENTRATION = 1.5f
+    private const val MAX_DETECT_SIDE = 1024
 
     fun detect(source: Bitmap, crop: RectF): Grid? {
         val region = ImageToPattern.cropBitmap(source, crop) ?: return null
@@ -48,12 +53,51 @@ object PixelGridDetector {
             val w = region.width
             val h = region.height
             if (w < 24 || h < 24) return null
-            val pixels = IntArray(w * h)
-            region.getPixels(pixels, 0, w, 0, 0, w, h)
-            return detect(pixels, w, h)
+            if (w <= MAX_DETECT_SIDE && h <= MAX_DETECT_SIDE) {
+                val pixels = IntArray(w * h)
+                region.getPixels(pixels, 0, w, 0, 0, w, h)
+                return detect(pixels, w, h)
+            }
+            // 大图不整张取像素：照片通常在一个窗口里就会判失败，
+            // 1024 窗口也足够覆盖 64px 以内的格子周期（period 的 maxP）。
+            return detectInWindows(region, w, h)
         } finally {
             if (region !== source) region.recycle()
         }
+    }
+
+    /**
+     * 只在几个 1024×1024 窗口里找周期。窗口内的相位加上窗口起点再对周期取模，
+     * 就换算回整张裁剪区的相位；格数仍按整张裁剪区重新计算。
+     */
+    private fun detectInWindows(region: Bitmap, width: Int, height: Int): Grid? {
+        val pw = min(width, MAX_DETECT_SIDE)
+        val ph = min(height, MAX_DETECT_SIDE)
+        val xs = intArrayOf((width - pw) / 2, 0, width - pw).distinct()
+        val ys = intArrayOf((height - ph) / 2, 0, height - ph).distinct()
+        val pixels = IntArray(pw * ph)
+        var best: Grid? = null
+        for (y in ys) {
+            for (x in xs) {
+                region.getPixels(pixels, 0, pw, x, y, pw, ph)
+                val local = detect(pixels, pw, ph) ?: continue
+                val offsetX = shiftPhase(x + local.offsetX, local.cellX)
+                val offsetY = shiftPhase(y + local.offsetY, local.cellY)
+                val cols = ((width - offsetX).coerceAtLeast(1).toFloat() / local.cellX).roundToInt()
+                val rows = ((height - offsetY).coerceAtLeast(1).toFloat() / local.cellY).roundToInt()
+                if (cols < 2 || rows < 2 || cols > MAX_SIDE || rows > MAX_SIDE) continue
+                val candidate = local.copy(offsetX = offsetX, offsetY = offsetY, cols = cols, rows = rows)
+                val current = best
+                if (current == null || candidate.confidence > current.confidence) best = candidate
+            }
+        }
+        return best
+    }
+
+    private fun shiftPhase(value: Int, cell: Float): Int {
+        val r = value - floor(value / cell) * cell
+        val i = r.roundToInt()
+        return if (i.toFloat() >= cell) 0 else i
     }
 
     /** 纯算法入口，方便用合成像素阵列做 JVM 单测。 */
@@ -91,6 +135,9 @@ object PixelGridDetector {
 
         val px = period(colEdge) ?: return null
         val py = period(rowEdge) ?: return null
+        // 平滑照片的边缘能量自相关在 2–3px 处也很高，但那是「相邻像素差不多」，
+        // 不是格子边界。真实拼豆截图一格通常远大于 3px。
+        if (px.first < 3 || py.first < 3) return null
         val conf = min(px.second, py.second)
         if (conf < 0.30f) return null
         // 两个方向的格子应该差不多大；差太多说明识别到的是图案内部的条纹而不是格子
@@ -98,12 +145,46 @@ object PixelGridDetector {
 
         val cellX = refinePeriod(colEdge, px.first)
         val cellY = refinePeriod(rowEdge, py.first)
-        if (cellX < 2f || cellY < 2f) return null
+        if (cellX < MIN_CELL || cellY < MIN_CELL) return null
         val offsetX = refinePhase(colEdge, cellX)
         val offsetY = refinePhase(rowEdge, cellY)
-        val cols = ((w - offsetX).coerceAtLeast(1).toFloat() / cellX).roundToInt().coerceIn(2, MAX_SIDE)
-        val rows = ((h - offsetY).coerceAtLeast(1).toFloat() / cellY).roundToInt().coerceIn(2, MAX_SIDE)
+        // 照片的边缘能量摊在每一列上；真实网格集中在周期性的边界列上。
+        if (min(
+                boundaryConcentration(colEdge, cellX, offsetX),
+                boundaryConcentration(rowEdge, cellY, offsetY),
+            ) < MIN_CONCENTRATION
+        ) return null
+        val cols = ((w - offsetX).coerceAtLeast(1).toFloat() / cellX).roundToInt()
+        val rows = ((h - offsetY).coerceAtLeast(1).toFloat() / cellY).roundToInt()
+        // 不能把超大格数截断成 240：那会把照片伪装成一张 240×240 的图纸。
+        if (cols < 2 || rows < 2 || cols > MAX_SIDE || rows > MAX_SIDE) return null
         return Grid(cellX, cellY, offsetX, offsetY, cols, rows, conf)
+    }
+
+    /** 周期边界处的边缘能量峰值 / 全图平均边缘能量。 */
+    private fun boundaryConcentration(edge: FloatArray, period: Float, phase: Int): Float {
+        val n = edge.size
+        if (n < 2) return 0f
+        var total = 0.0
+        for (i in 1 until n) total += edge[i]
+        val mean = total / (n - 1)
+        if (mean <= 1e-6) return 0f
+        var sum = 0f
+        var count = 0
+        var k = 0
+        while (true) {
+            val idx = (phase + k * period).roundToInt()
+            if (idx >= n) break
+            if (idx >= 1) {
+                var peak = edge[idx]
+                if (idx - 1 >= 1) peak = max(peak, edge[idx - 1])
+                if (idx + 1 < n) peak = max(peak, edge[idx + 1])
+                sum += peak
+                count++
+            }
+            k++
+        }
+        return if (count == 0) 0f else (sum / count) / mean.toFloat()
     }
 
     /**

@@ -6,8 +6,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 class PixelGridDetectorTest {
 
@@ -92,5 +94,62 @@ class PixelGridDetectorTest {
     @Test
     fun rejectsTooSmallRegion() {
         assertNull(PixelGridDetector.detect(IntArray(20 * 30), 20, 30))
+    }
+
+    @Test
+    fun rejectsSmoothPhotoLikeImage() {
+        val w = 320
+        val h = 320
+        val pixels = IntArray(w * h) { i ->
+            val x = i % w
+            val y = i / w
+            val v = (128.0 + 45.0 * sin(x / 17.0) + 35.0 * cos(y / 13.0) +
+                20.0 * sin((x + y) / 29.0)).roundToInt().coerceIn(0, 255)
+            (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+        }
+        assertNull(PixelGridDetector.detect(pixels, w, h))
+    }
+
+    @Test
+    fun rejectsIrregularTexture() {
+        val w = 300
+        val h = 300
+        val pixels = IntArray(w * h) { i ->
+            val x = i % w
+            val y = i / w
+            val v = (128.0 + 40.0 * sin(2 * Math.PI * x / 5.5) +
+                30.0 * sin(2 * Math.PI * y / 7.3)).roundToInt().coerceIn(0, 255)
+            (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+        }
+        assertNull(PixelGridDetector.detect(pixels, w, h))
+    }
+
+    @Test
+    fun rejectsRandomNoise() {
+        var seed = 12345
+        val pixels = IntArray(200 * 200) {
+            seed = seed * 1103515245 + 12345
+            val v = (seed ushr 16) and 0xFF
+            0xFF000000.toInt() or (v shl 16) or (v shl 8) or v
+        }
+        assertNull(PixelGridDetector.detect(pixels, 200, 200))
+    }
+
+    @Test
+    fun rejectsGridDenserThanLimit() {
+        val (pixels, w, h) = gridImage(250, 30, 3f)
+        assertNull(PixelGridDetector.detect(pixels, w, h))
+    }
+
+    @Test
+    fun detectsFractionalCellSize() {
+        val (pixels, w, h) = gridImage(30, 30, 27.3f, 27.3f, 5.3f, 7.1f)
+        val grid = PixelGridDetector.detect(pixels, w, h)
+
+        assertNotNull(grid)
+        assertTrue(abs(grid!!.cellX - 27.3f) < 0.6f)
+        assertTrue(abs(grid.cellY - 27.3f) < 0.6f)
+        assertTrue(grid.cols in 29..30)
+        assertTrue(grid.rows in 29..30)
     }
 }
