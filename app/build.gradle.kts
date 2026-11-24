@@ -11,8 +11,8 @@ android {
         applicationId = "com.pindou.app"
         minSdk = 30
         targetSdk = 37
-        versionCode = 31
-        versionName = "0.6.24"
+        versionCode = 32
+        versionName = "0.6.25"
     }
 
     buildFeatures {

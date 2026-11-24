@@ -1,14 +1,19 @@
 package com.pindou.app.ui.palette
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,7 +53,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -55,6 +65,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pindou.app.data.BeadColor
+import com.pindou.app.data.ColorPick
 import com.pindou.app.data.HexColor
 import com.pindou.app.data.InventoryCsv
 import com.pindou.app.data.Palette
@@ -72,6 +83,8 @@ import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
  * 色板页：切换内置 / 自定义色板，按色系筛，点色块切换「我有 / 没有」。
@@ -95,6 +108,9 @@ fun PaletteScreen(
     var editCount by remember { mutableStateOf("") }
     var calibrateColor by remember { mutableStateOf<BeadColor?>(null) }
     var calibrateText by remember { mutableStateOf("") }
+    // 校准对话框里的照片吸管：选中的（已下采样）照片 + 是否在解码
+    var pickBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var pickingPhoto by remember { mutableStateOf(false) }
     var readingCsv by remember { mutableStateOf(false) }
     var importPreview by remember { mutableStateOf<InventoryCsv.Parsed?>(null) }
     var readingPaletteCsv by remember { mutableStateOf(false) }
@@ -154,6 +170,36 @@ fun PaletteScreen(
                 paletteImportTitle = parsed.title
                 paletteImport = parsed
             }
+        }
+    }
+
+    // 照片吸管：系统相册选图（PhotoPicker 免权限），解码下采样在 IO 线程。
+    // 对话框已经关掉时把解码结果直接回收，避免白占内存。
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        if (calibrateColor == null) return@rememberLauncherForActivityResult
+        pickingPhoto = true
+        scope.launch {
+            val decoded = withContext(Dispatchers.IO) { loadPickBitmap(context, uri, MAX_PICK_SIDE) }
+            pickingPhoto = false
+            if (calibrateColor == null) {
+                decoded?.recycle()
+                return@launch
+            }
+            if (decoded == null) {
+                snackbar.showSnackbar("照片读取失败，换一张试试")
+            } else {
+                pickBitmap?.recycle()
+                pickBitmap = decoded
+            }
+        }
+    }
+
+    // 离开色板页时回收还没关掉的照片
+    DisposableEffect(Unit) {
+        onDispose {
+            pickBitmap?.recycle()
+            pickBitmap = null
         }
     }
 
@@ -329,6 +375,8 @@ fun PaletteScreen(
                 editColor = null
                 calibrateColor = target
                 calibrateText = target.hex.removePrefix("#")
+                pickBitmap?.recycle()
+                pickBitmap = null
             },
         )
     }
@@ -507,8 +555,13 @@ fun PaletteScreen(
         val previewArgb = normalized?.let {
             runCatching { android.graphics.Color.parseColor(it) }.getOrNull()
         }
+        fun closeCalibration() {
+            pickBitmap?.recycle()
+            pickBitmap = null
+            calibrateColor = null
+        }
         AlertDialog(
-            onDismissRequest = { calibrateColor = null },
+            onDismissRequest = { closeCalibration() },
             title = { Text("校准 ${calibrating.code}") },
             text = {
                 Column {
@@ -552,6 +605,73 @@ fun PaletteScreen(
                         },
                     )
                     Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = {
+                                photoPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            },
+                            enabled = !pickingPhoto,
+                            contentPadding = PaddingValues(0.dp),
+                        ) {
+                            Text(
+                                when {
+                                    pickingPhoto -> "读取中…"
+                                    pickBitmap == null -> "从照片取色"
+                                    else -> "换一张照片"
+                                },
+                            )
+                        }
+                        if (pickBitmap != null) {
+                            TextButton(
+                                onClick = {
+                                    pickBitmap?.recycle()
+                                    pickBitmap = null
+                                },
+                                contentPadding = PaddingValues(0.dp),
+                            ) { Text("收起照片") }
+                        }
+                    }
+                    val shot = pickBitmap
+                    if (shot != null) {
+                        Spacer(Modifier.height(4.dp))
+                        Image(
+                            bitmap = shot.asImageBitmap(),
+                            contentDescription = "点照片取色",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(220.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                    RoundedCornerShape(8.dp),
+                                )
+                                .pointerInput(shot) {
+                                    detectTapGestures { offset ->
+                                        val (x, y) = ColorPick.mapTapToPixel(
+                                            offset.x,
+                                            offset.y,
+                                            size.width.toFloat(),
+                                            size.height.toFloat(),
+                                            shot.width,
+                                            shot.height,
+                                        )
+                                        calibrateText = ColorPick.argbToHex(shot.getPixel(x, y))
+                                    }
+                                },
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "点照片上的颜色，HEX 会自动填到上面；大图先缩到长边 $MAX_PICK_SIDE px。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         "把屏幕颜色调成你手上豆子的颜色。图纸、缩略图、导出和分享的 PNG 都会跟着变，图纸格子数据不动。",
                         style = MaterialTheme.typography.bodySmall,
@@ -564,7 +684,7 @@ fun PaletteScreen(
                     enabled = normalized != null,
                     onClick = {
                         store.calibrate(calibrating.code, normalized)
-                        calibrateColor = null
+                        closeCalibration()
                     },
                 ) { Text("保存") }
             },
@@ -573,10 +693,10 @@ fun PaletteScreen(
                     if (store.calibratedHex(calibrating.code) != null) {
                         TextButton(onClick = {
                             store.calibrate(calibrating.code, null)
-                            calibrateColor = null
+                            closeCalibration()
                         }) { Text("恢复默认") }
                     }
-                    TextButton(onClick = { calibrateColor = null }) { Text("取消") }
+                    TextButton(onClick = { closeCalibration() }) { Text("取消") }
                 }
             },
         )
@@ -707,6 +827,34 @@ private fun ColorCell(
 }
 
 private const val MAX_CSV_BYTES = 2 * 1024 * 1024
+
+/** 校准吸管照片的长边上限：再大就没必要，220dp 预览也看不出差别。 */
+private const val MAX_PICK_SIDE = 1024
+
+/**
+ * 读一张相册照片用于吸管：先按 2 的幂抽样解码，再精确缩到长边 ≤ maxDim，避免大图 OOM。
+ * 失败返回 null，由调用方提示，不崩。
+ */
+private fun loadPickBitmap(context: Context, uri: Uri, maxDim: Int): Bitmap? = runCatching {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    val longSide = max(bounds.outWidth, bounds.outHeight)
+    if (longSide <= 0) return@runCatching null
+    var sample = 1
+    while (longSide / sample > maxDim * 2) sample *= 2
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    val decoded = context.contentResolver.openInputStream(uri)
+        ?.use { BitmapFactory.decodeStream(it, null, opts) }
+        ?: return@runCatching null
+    val decodedLong = max(decoded.width, decoded.height)
+    if (decodedLong <= maxDim) return@runCatching decoded
+    val ratio = maxDim.toFloat() / decodedLong
+    val outW = max(1, (decoded.width * ratio).roundToInt())
+    val outH = max(1, (decoded.height * ratio).roundToInt())
+    val scaled = Bitmap.createScaledBitmap(decoded, outW, outH, true)
+    if (scaled !== decoded) decoded.recycle()
+    scaled
+}.getOrNull()
 
 /** 拿 SAF 文件名，给色板起个默认名字；读不到就用兜底名。 */
 private fun queryDisplayName(context: Context, uri: Uri): String? = runCatching {

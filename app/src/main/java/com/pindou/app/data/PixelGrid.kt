@@ -46,6 +46,10 @@ object PixelGridDetector {
     // 真实网格的边界能量集中度实测 3 以上；照片的平滑边缘只有 1.0–1.2。
     private const val MIN_CONCENTRATION = 1.5f
     private const val MAX_DETECT_SIDE = 1024
+    // 周期细扫：候选 ±1px、0.05px 一步；低于 2.5px 的候选没有再细扫的意义。
+    private const val PERIOD_SCAN_STEP = 0.05f
+    private const val PERIOD_SCAN_RADIUS = 1f
+    private const val MIN_SCAN_CELL = 2.5f
 
     fun detect(source: Bitmap, crop: RectF): Grid? {
         val region = ImageToPattern.cropBitmap(source, crop) ?: return null
@@ -133,18 +137,18 @@ object PixelGridDetector {
             rowEdge[y] = s
         }
 
-        val px = period(colEdge) ?: return null
-        val py = period(rowEdge) ?: return null
+        val ex = estimatePeriod(colEdge) ?: return null
+        val ey = estimatePeriod(rowEdge) ?: return null
         // 平滑照片的边缘能量自相关在 2–3px 处也很高，但那是「相邻像素差不多」，
         // 不是格子边界。真实拼豆截图一格通常远大于 3px。
-        if (px.first < 3 || py.first < 3) return null
-        val conf = min(px.second, py.second)
+        if (ex.integerPeak < 3 || ey.integerPeak < 3) return null
+        val conf = min(ex.confidence, ey.confidence)
         if (conf < 0.30f) return null
         // 两个方向的格子应该差不多大；差太多说明识别到的是图案内部的条纹而不是格子
-        if (abs(px.first - py.first).toFloat() > max(1f, px.first / 4f)) return null
+        if (abs(ex.cell - ey.cell) > max(1f, ex.cell / 4f)) return null
 
-        val cellX = refinePeriod(colEdge, px.first)
-        val cellY = refinePeriod(rowEdge, py.first)
+        val cellX = ex.cell
+        val cellY = ey.cell
         if (cellX < MIN_CELL || cellY < MIN_CELL) return null
         val offsetX = refinePhase(colEdge, cellX)
         val offsetY = refinePhase(rowEdge, cellY)
@@ -161,7 +165,7 @@ object PixelGridDetector {
         return Grid(cellX, cellY, offsetX, offsetY, cols, rows, conf)
     }
 
-    /** 周期边界处的边缘能量峰值 / 全图平均边缘能量。 */
+    /** 周期边界处的边缘能量峰值（插值取值）/ 全图平均边缘能量。 */
     private fun boundaryConcentration(edge: FloatArray, period: Float, phase: Int): Float {
         val n = edge.size
         if (n < 2) return 0f
@@ -173,12 +177,10 @@ object PixelGridDetector {
         var count = 0
         var k = 0
         while (true) {
-            val idx = (phase + k * period).roundToInt()
-            if (idx >= n) break
-            if (idx >= 1) {
-                var peak = edge[idx]
-                if (idx - 1 >= 1) peak = max(peak, edge[idx - 1])
-                if (idx + 1 < n) peak = max(peak, edge[idx + 1])
+            val x = phase + k * period
+            if (x >= n - 1) break
+            if (x >= 1f) {
+                val peak = max(edgeAt(edge, x), max(edgeAt(edge, x - 1f), edgeAt(edge, x + 1f)))
                 sum += peak
                 count++
             }
@@ -187,34 +189,23 @@ object PixelGridDetector {
         return if (count == 0) 0f else (sum / count) / mean.toFloat()
     }
 
-    /**
-     * 周期细化到小数。整数周期只能到 1px，而 53 格累积下来就是半格漂移：
-     * 右边的格子会整体取错色。按 0.05px 步长在整数周期附近重扫一遍，取边界能量最强的那个。
-     */
-    private fun refinePeriod(edge: FloatArray, p0: Int): Float {
-        var bestP = p0.toFloat()
-        var best = -1f
-        var p = max(2f, p0 - 0.8f)
-        while (p <= p0 + 0.8f) {
-            var sum = 0f
-            var count = 0
-            var k = 0
-            while (true) {
-                val idx = (k * p).roundToInt()
-                if (idx >= edge.size) break
-                sum += edge[idx]
-                count++
-                k++
-            }
-            val score = if (count > 0) sum / count else 0f
-            if (score > best) { best = score; bestP = p }
-            p += 0.05f
-        }
-        return bestP
-    }
+    /** 细扫得到的周期候选。 */
+    private data class PeriodCandidate(val cell: Float, val score: Float)
 
-    /** 自相关找周期；返回 (周期, 归一化相关分)。 */
-    private fun period(edge: FloatArray): Pair<Int, Float>? {
+    /** 整数自相关峰 + 谐波候选细扫后的结果。 */
+    private data class PeriodEstimate(val cell: Float, val integerPeak: Int, val confidence: Float)
+
+    /**
+     * 找基频，允许非整数周期。
+     *
+     * 1. 先用整数 lag 自相关找「疑似周期」（3.3px 这种会在 3 的倍数上出峰）；
+     * 2. 把接近最高分的整数 lag 连同它的 1/2、1/3、1/4 作为候选（谐波消歧）；
+     * 3. 每个候选在 ±1px 内以 0.05px 步长细扫，用「插值边界能量的均值 × 覆盖率」打分，
+     *    取分数接近最高分里最小的那个——真基频优先，半周期 / 2 倍周期都会被压下去。
+     *
+     * 采样用线性插值而不是 roundToInt：小数周期取整会产生别名（3.3 会漂到 2.5 之类的假周期）。
+     */
+    private fun estimatePeriod(edge: FloatArray): PeriodEstimate? {
         val n = edge.size
         if (n < 16) return null
         var energy = 0.0
@@ -236,32 +227,129 @@ object PixelGridDetector {
         var best = 0.0
         for (p in 2..maxP) if (scores[p] > best) best = scores[p]
         if (best < 0.30) return null
-        // 2p 的相关分通常也不低，所以取「接近最高分里最小的那个」当基频
+
+        // 接近最高分的整数 lag 都进候选：3.3px 这种真实周期会在 3 的倍数上出峰，
+        // 2 倍/3 倍周期的峰也留着，靠后面的细扫打分（均值 × 覆盖率）自己分胜负。
+        val peaks = ArrayList<Int>()
         for (p in 2..maxP) {
-            if (scores[p] >= best * 0.85) return p to scores[p].toFloat()
+            if (scores[p] >= best * 0.85) peaks.add(p)
         }
-        return 0 to 0f
+        if (peaks.isEmpty()) return null
+
+        val candidates = ArrayList<Float>()
+        fun addCandidate(value: Float) {
+            if (value < MIN_SCAN_CELL) return
+            if (candidates.any { abs(it - value) < 0.1f }) return
+            candidates.add(value)
+        }
+        for (p in peaks) {
+            addCandidate(p.toFloat())
+            addCandidate(p / 2f)
+            addCandidate(p / 3f)
+            addCandidate(p / 4f)
+        }
+
+        var bestScore = 0f
+        val refined = ArrayList<PeriodCandidate>(candidates.size)
+        for (p0 in candidates) {
+            val start = floor((p0 - PERIOD_SCAN_RADIUS) / PERIOD_SCAN_STEP) * PERIOD_SCAN_STEP
+            var bestP = p0
+            var bestLocal = -1f
+            var p = max(MIN_SCAN_CELL, start)
+            while (p <= p0 + PERIOD_SCAN_RADIUS + 1e-3f) {
+                val score = combScore(edge, p)
+                if (score > bestLocal) {
+                    bestLocal = score
+                    bestP = p
+                }
+                p += PERIOD_SCAN_STEP
+            }
+            if (bestLocal > bestScore) bestScore = bestLocal
+            refined.add(PeriodCandidate(bestP, bestLocal))
+        }
+
+        val chosen = refined
+            .filter { it.score >= bestScore * 0.9f }
+            .minByOrNull { it.cell }
+            ?: return null
+        // 置信度沿用原口径：最小的整数候选峰的相关分（和旧版 period() 返回值一致）。
+        val integerPeak = peaks.first()
+        return PeriodEstimate(chosen.cell, integerPeak, scores[integerPeak].toFloat())
     }
 
-    /** 小数周期下，边界落在哪个相位。 */
+    /** 周期边界采样打分：插值能量均值 × 覆盖率。半周期均值减半、2 倍周期覆盖率减半，都会被压下去。 */
+    private fun combScore(edge: FloatArray, period: Float): Float {
+        var total = 0f
+        for (v in edge) total += v
+        if (total <= 1e-6f) return 0f
+
+        var bestMean = -1f
+        var bestSum = 0f
+        var bestPhase = 0f
+        var phase = 0f
+        while (phase < period) {
+            val (mean, sum) = combStats(edge, period, phase)
+            if (mean > bestMean) {
+                bestMean = mean
+                bestSum = sum
+                bestPhase = phase
+            }
+            phase += 0.25f
+        }
+        // 粗扫 0.25px 后在最优点附近再细化
+        var o = max(0f, bestPhase - 0.25f)
+        val end = bestPhase + 0.25f
+        while (o <= end) {
+            val (mean, sum) = combStats(edge, period, o)
+            if (mean > bestMean) {
+                bestMean = mean
+                bestSum = sum
+            }
+            o += 0.05f
+        }
+        if (bestMean <= 0f) return 0f
+        return bestMean * (bestSum / total)
+    }
+
+    /** 沿相位 `phase` 每隔 `period` 取一次插值边缘能量，返回 (均值, 总和)。 */
+    private fun combStats(edge: FloatArray, period: Float, phase: Float): Pair<Float, Float> {
+        val n = edge.size
+        var sum = 0f
+        var count = 0
+        var x = phase
+        while (x < n - 1) {
+            sum += edgeAt(edge, x)
+            count++
+            x += period
+        }
+        return if (count == 0) 0f to 0f else (sum / count) to sum
+    }
+
+    /** 边缘能量曲线的小数取值：线性插值；越界按 0 处理。 */
+    private fun edgeAt(edge: FloatArray, x: Float): Float {
+        if (x < 0f) return 0f
+        val i = floor(x).toInt()
+        if (i >= edge.size) return 0f
+        val f = x - i
+        return if (i + 1 < edge.size) edge[i] * (1f - f) + edge[i + 1] * f else edge[i]
+    }
+
+    /** 小数周期下，边界落在哪个相位（返回 0..ceil(p) 的整数起点）。 */
     private fun refinePhase(edge: FloatArray, p: Float): Int {
-        var bestO = 0
+        var bestO = 0f
         var best = -1f
         val span = p.roundToInt() + 1
-        for (o in 0 until span) {
-            var sum = 0f
-            var count = 0
-            var k = 0
-            while (true) {
-                val idx = (o + k * p).roundToInt()
-                if (idx >= edge.size) break
-                sum += edge[idx]
-                count++
-                k++
+        var o = 0f
+        while (o < span) {
+            val mean = combStats(edge, p, o).first
+            if (mean > best) {
+                best = mean
+                bestO = o
             }
-            val score = if (count > 0) sum / count else 0f
-            if (score > best) { best = score; bestO = o }
+            o += 0.1f
         }
-        return bestO
+        var phase = bestO
+        while (phase >= p) phase -= p
+        return phase.roundToInt().coerceAtLeast(0)
     }
 }
