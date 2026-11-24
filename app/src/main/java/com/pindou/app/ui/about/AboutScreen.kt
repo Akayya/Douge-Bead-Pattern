@@ -155,7 +155,11 @@ private fun SupportCard() {
             SupportChannel("微信", "support/wechat.png"),
         )
     }
-    var selected by remember { mutableIntStateOf(0) }
+    // 默认选中第一个真的放了码的渠道；都没放就回到第一个占位
+    val initial = remember {
+        channels.indexOfFirst { loadSupportImage(context, it.assetPath) != null }.coerceAtLeast(0)
+    }
+    var selected by remember { mutableIntStateOf(initial) }
     val channel = channels[selected]
     val qr = remember(selected) { loadSupportImage(context, channel.assetPath) }
 
