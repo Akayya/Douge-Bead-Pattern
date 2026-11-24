@@ -16,7 +16,8 @@ import java.io.FileOutputStream
  * 库页缩略图缓存：按图纸内容渲染一次 256px 位图，内存与 filesDir/thumbs 各存一份。
  * 施工打勾只会改 updatedAt，cells 哈希不变，所以不会反复重建。
  * key 里带色板颜色指纹：校准后旧图自动失效，不再需要全量 clear；
- * 缓存改成在图纸实际显示时懒重建，旧指纹文件在下次渲染同一张图纸时清掉。
+ * 缓存改成在图纸实际显示时懒重建，旧指纹文件在下次渲染同一张图纸时清掉；
+ * 长期不打开的图纸靠启动时的 [sweep] 兜底清扫。
  */
 object PatternThumbCache {
 
@@ -81,6 +82,22 @@ object PatternThumbCache {
     fun clearAll(context: Context) {
         memory.evictAll()
         dir(context).listFiles { f -> f.isFile }?.forEach { it.delete() }
+    }
+
+    /**
+     * 启动清扫：删掉孤儿文件（图纸已不存在）和同一张图纸的旧指纹文件，每张只留最新一份。
+     * 补的是懒重建的死角——长期不打开的图纸，旧文件原本会一直留在盘上。
+     * 在首帧贴图之前调用，返回删掉的份数。
+     */
+    fun sweep(context: Context, liveIds: Set<String>): Int {
+        val files = dir(context).listFiles { f -> f.isFile } ?: return 0
+        val doomed = ThumbCleanupPolicy.namesToDelete(
+            files.map { it.name to it.lastModified() },
+            liveIds,
+        ).toHashSet()
+        var removed = 0
+        files.forEach { if (it.name in doomed && it.delete()) removed++ }
+        return removed
     }
 
     private fun render(pattern: Pattern, palette: Palette): Bitmap {

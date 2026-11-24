@@ -22,6 +22,7 @@
 | — | 支持 Android 11（minSdk 31 → 30） | ✅ 完成，Android 11 模拟器验证通过（0.6.22） |
 | — | 「关于」页 + 自愿赞助通道（静态收款码，不联网、不锁功能） | ✅ 已完成 |
 | — | 赞助通道接入微信赞赏码（`assets/support/wechat.png`，关于页默认选中有码渠道） | ✅ 已完成（0.6.23） |
+| — | 缩略图缓存启动清扫（孤儿文件删除、同图纸只留最新一份，`ThumbCleanupPolicy`） | ✅ 已完成（0.6.24） |
 
 模拟器截图在 `screenshots/`，按里程碑分六层（`m1/`…`m6/`），每层只留这个阶段最能说明问题的几张：M1 骨架与色板、M2 图片转图纸与原图网格识别、M3 编辑器/施工/画布/导出、M4 成本与 A4 PDF（含改版前后的对比图 `pdf-before-page2.png` / `pdf-after-page2.png`）、M5 豆仓库存与撤销、M6 空白画布/库页进度/施工页色号。截图不入库（`.gitignore` 里忽略整个 `screenshots/`）。
 
@@ -172,7 +173,7 @@
 
 ## 单元测试与去杂点修复（0.6.10）
 
-- 新增 JVM 单元测试（JUnit 4），`./gradlew.bat :app:testDebugUnitTest` 直接跑，不依赖模拟器；截至 0.6.21 是 16 个测试类共 88 个用例（新增 5 个针对照片/噪声/超密网格的误判回归），覆盖 HEX 颜色解析、图纸裁剪/旋转/镜像、去杂点、减色、导出尺寸预算、施工进度、像素网格识别、材料单 CSV、PDF 分页、库存 CSV 导入、拼完扣减、29/58 板布局、快照保留策略、单图分享文件编解码与导入重命名、自定义色板 JSON 校验与 CSV 解析、内嵌色板的一致性校验。org.json 仅测试用，生产代码仍用 Android 自带实现。
+- 新增 JVM 单元测试（JUnit 4），`./gradlew.bat :app:testDebugUnitTest` 直接跑，不依赖模拟器；截至 0.6.24 是 17 个测试类共 95 个用例（新增 7 个缩略图启动清扫策略用例），覆盖 HEX 颜色解析、图纸裁剪/旋转/镜像、去杂点、减色、导出尺寸预算、施工进度、像素网格识别、材料单 CSV、PDF 分页、库存 CSV 导入、拼完扣减、29/58 板布局、快照保留策略、单图分享文件编解码与导入重命名、自定义色板 JSON 校验与 CSV 解析、内嵌色板的一致性校验、缩略图启动清扫策略。org.json 仅测试用，生产代码仍用 Android 自带实现。
 - 把 Android 依赖从纯逻辑里剥出来：新增 `HexColor`（替代 `android.graphics.Color.parseColor`），`PixelGridDetector.detect(IntArray, width, height)` 可脱离 `Bitmap` 测试；识别算法本身与重构前一致。
 - 顺手修了一个真 bug：去杂点用 `argb < 0` 判断「颜色无效」，而所有不透明色（`0xFF……`）在 Int 里都是负数，导致点「去杂点」永远提示「没有找到杂点」。现在改成可空数组判空；单测覆盖了近白噪点、两色混合过渡格，黑眼珠/线条端点仍会保留。
 - 工程目录名含中文时要注意编码：Gradle 给测试 worker 写的 `@argfile` 按 daemon 默认编码写、JVM 启动器按系统编码读。`gradle.properties` 因此用 `-Dfile.encoding=COMPAT`（跟随系统编码）；写死 UTF-8 会报 `ClassNotFoundException`。
@@ -294,6 +295,7 @@
 - 库页缩略图不再每帧重画所有格子：`data/PatternThumbCache.kt` 按「尺寸 + 色板 + 色板颜色指纹 + cells 内容哈希」渲染一次 256px 位图，内存 LruCache（8MB）+ `filesDir/thumbs/<id>-<尺寸>-<色板>-<指纹>-<哈希>.png` 双缓存，之后滚动直接贴图。
 - 施工打勾只改 `updatedAt`，cells 哈希不变，所以不会重建缩略图；编辑、去杂点、减色、画布变换改了内容会自动换新 key，并清掉同一张图纸的旧文件；色板校准改了颜色会换指纹，旧缓存自动失效、显示时懒重建。
 - 删除图纸时一起删缓存；没显示过的图纸不预生成，滚到哪生成到哪。
+- 启动清扫（0.6.24）：首帧贴图前 `PatternThumbCache.sweep` 按 `data/ThumbCleanupPolicy.kt` 扫一遍 `files/thumbs`——图纸已不存在的孤儿文件、不合命名约定的残留直接删；同一张图纸只留最后修改时间最新的一份（时间并列留文件名字典序最小），旧指纹/旧内容哈希不再依赖"下次打开才清"。缓存可再生，删错最多重画一次。
 
 ## 目录结构
 

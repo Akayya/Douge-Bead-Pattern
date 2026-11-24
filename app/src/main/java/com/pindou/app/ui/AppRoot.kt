@@ -60,13 +60,16 @@ fun AppRoot() {
         var seeded = false
         val loaded = withContext(Dispatchers.IO) {
             val existing = PatternStore.list(context)
-            if (existing.isEmpty()) {
+            val list = if (existing.isEmpty()) {
                 seeded = true
                 SamplePatterns.heart(store.current)?.let { PatternStore.save(context, it) }
                 PatternStore.list(context)
             } else {
                 existing
             }
+            // 首帧贴图前清扫缩略图缓存：孤儿文件与旧指纹各图纸只留最新一份
+            runCatching { PatternThumbCache.sweep(context, list.mapTo(HashSet()) { it.id }) }
+            list
         }
         patterns.clear()
         patterns.addAll(loaded)
