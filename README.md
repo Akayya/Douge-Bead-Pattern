@@ -9,7 +9,7 @@
 ![Android 11+](https://img.shields.io/badge/Android-11%2B-3DDC84?style=flat-square&logo=android&logoColor=white)
 ![Offline](https://img.shields.io/badge/Offline-100%25-2f3640?style=flat-square)
 [![License](https://img.shields.io/github/license/Akayya/Douge-Bead-Pattern?style=flat-square&color=6C4BF4)](LICENSE)
-[![爱发电](https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E8%AF%B7%E6%88%91%E5%96%9D%E6%9D%AF%E5%A5%B6%E8%8C%B6-946ce6?style=flat-square)](https://ifdian.net/a/Akayya)
+[![爱发电](https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E8%AF%B7%E6%88%91%E5%90%83%E4%B8%AA%E9%9D%A2%E5%8C%85-946ce6?style=flat-square)](https://ifdian.net/a/Akayya)
 
 </div>
 
