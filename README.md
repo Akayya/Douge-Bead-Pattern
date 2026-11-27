@@ -306,7 +306,7 @@
 ## 目录结构
 
 ```
-拼豆工程/
+douge/
 ├─ app/                     安卓模块
 │  └─ src/main/
 │     ├─ java/com/pindou/app/
