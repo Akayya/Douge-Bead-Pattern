@@ -199,6 +199,120 @@ def build() -> Image.Image:
     return img
 
 
+PLAN_SIZE = 1024
+
+
+def heart_cells(n: int) -> list[tuple[int, int]]:
+    """在 n×n 网格上求心形占位格：隐函数 (x²+y²−1)³ − x²y³ ≤ 0，y 轴向上。
+
+    y 上限要留到 1.25——两个凸起比中央凹口高，只到 1.0 会把顶部压平。
+    """
+    cells: list[tuple[int, int]] = []
+    for gy in range(n):
+        for gx in range(n):
+            x = (gx + 0.5) / n * 2.30 - 1.15
+            y = 1.25 - (gy + 0.5) / n * 2.60
+            if (x * x + y * y - 1) ** 3 - x * x * y ** 3 <= 0:
+                cells.append((gx, gy))
+    return cells
+
+
+def bead(layer: Image.Image, cx: float, cy: float, r: float, color: tuple[int, int, int]) -> None:
+    """画一颗拼豆：实心盘 + 中孔 + 左上高光。
+
+    别加内圈亮边——那会让珠子看起来像垫圈，缩略图尺寸下尤其脏。
+    """
+    d = ImageDraw.Draw(layer)
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
+    hl = Image.new("RGBA", (int(r * 2) + 2, int(r * 2) + 2), (0, 0, 0, 0))
+    hd = ImageDraw.Draw(hl)
+    hd.ellipse([r * 0.30, r * 0.30, r * 1.10, r * 1.10], fill=(255, 255, 255, 46))
+    layer.alpha_composite(hl, (int(cx - r), int(cy - r)))
+    hr = r * 0.28
+    d.ellipse([cx - hr, cy - hr, cx + hr, cy + hr], fill=(252, 249, 255))
+
+
+def build_plan_cover() -> Image.Image:
+    """赞助方案封面：1024×1024 方形。
+
+    不放任何文字——档位封面在爱发电界面里只有一百多像素，字必然糊。
+    主体用 App 自己的产物：拼豆板上一颗颗拼豆拼成的心。
+    """
+    n = PLAN_SIZE
+    img = Image.new("RGB", (n, n), (255, 250, 245))
+    px = img.load()
+    for y in range(n):
+        t = y / n
+        c = lerp((255, 249, 242), (243, 235, 250), t)
+        for x in range(n):
+            px[x, y] = c
+
+    # 拼豆板：圆角白卡 + 淡投影
+    pad = 88
+    board = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(board)
+    bd.rounded_rectangle([pad, pad + 8, n - pad, n - pad + 8], radius=58, fill=(120, 90, 160, 26))
+    board = board.filter(ImageFilter.GaussianBlur(16))
+    img = Image.alpha_composite(img.convert("RGBA"), board)
+
+    card = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(card)
+    cd.rounded_rectangle([pad, pad, n - pad, n - pad], radius=58, fill=(255, 255, 255, 255))
+    img.alpha_composite(card)
+
+    # 板上的定位柱（淡淡的点阵），裁在卡片内
+    pegs = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    pdw = ImageDraw.Draw(pegs)
+    step = 40
+    for y in range(pad + step, n - pad, step):
+        for x in range(pad + step, n - pad, step):
+            pdw.ellipse([x - 3, y - 3, x + 3, y + 3], fill=(243, 238, 250, 255))
+    mask = Image.new("L", (n, n), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([pad, pad, n - pad, n - pad], radius=58, fill=255)
+    pegs.putalpha(Image.composite(pegs.getchannel("A"), Image.new("L", (n, n), 0), mask))
+    img.alpha_composite(pegs)
+
+    # 心形拼豆
+    grid = 15
+    cells = heart_cells(grid)
+    if not cells:
+        raise RuntimeError("心形网格为空")
+
+    xs = [c[0] for c in cells]
+    ys = [c[1] for c in cells]
+    gw = max(xs) - min(xs) + 1
+    gh = max(ys) - min(ys) + 1
+
+    # 按实际包围盒居中，别让心形自己飘在上面
+    area_w = (n - pad * 2) * 0.84
+    cell = min(area_w / gw, area_w / gh)
+    ox = (n - gw * cell) / 2 - min(xs) * cell
+    oy = (n - gh * cell) / 2 - min(ys) * cell
+
+    occupied = set(cells)
+    beads = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    r = cell * 0.45
+    outline_col = (201, 58, 71)
+    fill_col = (241, 148, 164)
+    for gx, gy in cells:
+        cx = ox + (gx + 0.5) * cell
+        cy = oy + (gy + 0.5) * cell
+        edge = any((gx + dx, gy + dy) not in occupied
+                   for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+        bead(beads, cx, cy, r, outline_col if edge else fill_col)
+
+    # 整片豆子的投影
+    shadow = beads.getchannel("A").filter(ImageFilter.GaussianBlur(9))
+    shade = Image.new("RGBA", (n, n), (60, 30, 60, 60))
+    shade.putalpha(shadow.point(lambda v: int(v * 0.30)))
+    under = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    under.alpha_composite(shade, (2, 8))
+    img.alpha_composite(under)
+    img.alpha_composite(beads)
+
+    return img.convert("RGB")
+
+
 def main() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
     master = build()
@@ -211,6 +325,8 @@ def main() -> None:
 
     mobile = full.resize((800, 400), Image.LANCZOS)
     mobile.save(os.path.join(OUT_DIR, "cover-mobile-800x400.png"), optimize=True)
+
+    build_plan_cover().save(os.path.join(OUT_DIR, "plan-cover-1024x1024.png"), optimize=True)
 
     for name in sorted(os.listdir(OUT_DIR)):
         p = os.path.join(OUT_DIR, name)
