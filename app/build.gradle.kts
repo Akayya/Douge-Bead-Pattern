@@ -1,6 +1,17 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.10"
+}
+
+// release 签名：密钥库和密码都放在工程外（C:\Users\Vonke\AppData\Local\douge\keystore），
+// 只在本机 keystore.properties 里引用，不进仓库。
+// 文件不存在时（换机器、新克隆）只跳过签名，debug 构建不受影响。
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) FileInputStream(f).use { load(it) }
 }
 
 android {
@@ -11,8 +22,19 @@ android {
         applicationId = "com.pindou.app"
         minSdk = 30
         targetSdk = 37
-        versionCode = 32
-        versionName = "0.6.25"
+        versionCode = 33
+        versionName = "0.6.26"
+    }
+
+    signingConfigs {
+        if (keystoreProps.isNotEmpty()) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
     }
 
     buildFeatures {
@@ -21,7 +43,12 @@ android {
 
     buildTypes {
         release {
+            // 不做 R8 / 资源压缩：作者明确不要小包，保持可反编译可对照
             isMinifyEnabled = false
+            isShrinkResources = false
+            if (keystoreProps.isNotEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

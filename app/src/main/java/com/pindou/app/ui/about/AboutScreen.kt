@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -36,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -43,7 +45,8 @@ import kotlinx.coroutines.launch
 
 /**
  * 关于页。里面的"赞助支持"是纯自愿的：不放广告、不锁功能、不弹窗催促，
- * 只有本页一个入口，二维码是写死在 assets/support/ 下的静态图，不联网、不申请权限。
+ * 只有本页一个入口。收款码是写死在 assets/support/ 下的静态图，本身不联网；
+ * 另有一个爱发电主页链接，只有用户主动点开时才会跳浏览器（App 自身不发起任何网络请求）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,6 +100,11 @@ fun AboutScreen(
                 Text("豆格", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text(
                     text = "版本 $version · 本地图纸，全离线",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "作者 Akayya",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -175,7 +183,7 @@ private fun SupportCard() {
         ) {
             Text("赞助支持", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                text = "这个 App 是我自己写的小工具，一直免费、无广告、功能不锁。\n如果它帮你省了时间，可以扫下面的码请我喝杯奶茶——完全自愿，不赞助也一点不影响使用。",
+                text = "这个 App 是我自己写的小工具，一直免费、无广告、功能不锁。\n如果它帮你省了时间，可以扫下面的码、或到爱发电主页请我喝杯奶茶——完全自愿，不赞助也一点不影响使用。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -229,9 +237,27 @@ private fun SupportCard() {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            // 站外链接：只有用户主动点才会打开浏览器。App 自身不联网，这里也不申请任何权限。
+            val uriHandler = LocalUriHandler.current
+            Spacer(Modifier.height(2.dp))
+            OutlinedButton(
+                onClick = { runCatching { uriHandler.openUri(AFDIAN_URL) } },
+            ) {
+                Text("在爱发电支持我", style = MaterialTheme.typography.labelLarge)
+            }
+            Text(
+                text = "也可以在电脑上打开 ifdian.net/a/Akayya\n点开需要联网，不点不影响任何功能",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }
+
+/** 作者的爱发电主页。改这里就等于换链接，别在别处硬编码。 */
+private const val AFDIAN_URL = "https://ifdian.net/a/Akayya"
 
 private data class SupportChannel(val label: String, val assetPath: String)
 

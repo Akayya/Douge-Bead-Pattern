@@ -24,6 +24,7 @@
 | — | 赞助通道接入微信赞赏码（`assets/support/wechat.png`，关于页默认选中有码渠道） | ✅ 已完成（0.6.23） |
 | — | 缩略图缓存启动清扫（孤儿文件删除、同图纸只留最新一份，`ThumbCleanupPolicy`） | ✅ 已完成（0.6.24） |
 | — | 非整数周期网格识别（0.05px 细扫）+ 校准「从照片取色」吸管（`ColorPick`） | ✅ 已完成（0.6.25） |
+| — | 关于页作者署名 + 爱发电赞助入口 + release 正式签名打包（对外分发用） | ✅ 已完成（0.6.26） |
 
 模拟器截图在 `screenshots/`，按里程碑分层（`m1/`…`m9/`），每层只留这个阶段最能说明问题的几张：M1 骨架与色板、M2 图片转图纸与原图网格识别、M3 编辑器/施工/画布/导出、M4 成本与 A4 PDF（含改版前后的对比图 `pdf-before-page2.png` / `pdf-after-page2.png`）、M5 豆仓库存与撤销、M6 空白画布/库页进度/施工页色号、m7 删除撤销与施工跨板跳转、m8 只看未完成、m9 施工页锁屏/平移缩放/逐色逐行闸门；另有 `acceptance/`（验收走查）与 `selfcheck/`（接手自检）。截图不入库（`.gitignore` 里忽略整个 `screenshots/`）。
 
@@ -342,16 +343,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-run.ps1 -Sho
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`
 
+对外分发请用 release 包（正式签名、`debuggable=false`）：
+
+```powershell
+& "$root\gradlew.bat" -p $root assembleRelease --console=plain
+# 产物：$root\app\build\outputs\apk\release\app-release.apk（约 23 MB）
+```
+
+签名材料在工程外：`C:\Users\Vonke\AppData\Local\douge\keystore\douge-release.jks`（RSA 4096，有效期 30 年），
+密码在同目录 `store-password.txt`，工程根的 `keystore.properties` 只做引用（已 gitignore）。
+⚠️ **这个密钥库必须备份**：丢了就无法给已安装的用户做覆盖升级，用户只能卸载重装，而图纸存在 App 私有目录里，卸载即丢失。
+
 ## 赞助通道（可选，非强制）
 
 设计原则：**只有一个入口、零打扰、零功能差异**，入口在图纸库右上角「关于」页里。
 
 - 实现方式：把 `alipay.png` / `wechat.png` 放进 `app/src/main/assets/support/`，重新打包即可显示；没放时页面显示"作者还没放收款码"，不会报错。
 - 已放：微信赞赏码（`wechat.png`，0.6.23）。打开关于页默认选中第一个放了码的渠道；都没放才显示占位。
+- 已放：爱发电主页入口（0.6.26）。按钮走 `LocalUriHandler` 交给系统浏览器打开 `https://ifdian.net/a/Akayya`，App 自身不发起网络请求、不申请权限；页面写明"点开需要联网，不点不影响任何功能"。链接常量在 `ui/about/AboutScreen.kt` 的 `AFDIAN_URL`。
 - 纯静态二维码：不接支付 SDK、不联网、不申请任何权限、不做校验（也无法校验谁付了多少）。
 - **不弹窗、不锁功能、不设"赞助后解锁"**。任何形式的功能门槛都会同时违反这套设计承诺和应用商店规则。
 - 上架注意：Google Play 对引导站外支付有限制，若要上 Play 需移除二维码或改成 Play 内购打赏项；国内商店/自己分发无此问题。
-- 想换成"爱发电 / 赞赏链接"式的做法也可以（App 交给系统浏览器打开外链，同样不需要网络权限），需要时告诉我改。
+- 赞助页当前是「微信赞赏码 + 爱发电入口」双通道。Patreon 未开：其对大陆创作者的打款受限，且 App 界面全中文，海外转化低。
 
 ## 色板数据来源
 
