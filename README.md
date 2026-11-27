@@ -318,13 +318,14 @@ douge/
 │     │  ├─ support/        赞助二维码：alipay.png、wechat.png（自己放，见该目录 README.txt）
 │     │  └─ samples/        测试用样例截图
 │     └─ res/               图标、主题、字符串
-├─ assets/                  开发用素材（samples/ 参考截图、palette/README.md 数据来源说明；原始色板 raw/ 不入库）
+├─ assets/                  开发用素材（samples/ 参考截图、palette/README.md 数据来源说明、marketing/cover/ 爱发电封面；原始色板 raw/ 不入库）
 ├─ docs/                    方案与决策记录（方案与范围.md、方案-M3.md、交接文档.md）
 ├─ screenshots/             模拟器截图，按里程碑分子目录（不入库）
 └─ scripts/
    ├─ build.ps1             构建 debug APK
    ├─ install-run.ps1       启动模拟器 → 安装 → 启动 → 截图
-   └─ build-palette-assets.py  把原始色板 JSON 转成 App 内置格式
+   ├─ build-palette-assets.py  把原始色板 JSON 转成 App 内置格式
+   └─ make-cover.py         生成爱发电主页封面（1440×720 母版 + 桌面/手机两种切法）
 ```
 
 ## 构建与运行
