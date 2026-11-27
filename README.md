@@ -2,11 +2,14 @@
 
 一个纯离线的安卓拼豆辅助 App：图片转图纸、手工绘制、豆数统计、施工模式、导出。
 
+[![爱发电](https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E8%AF%B7%E6%88%91%E5%96%9D%E6%9D%AF%E5%A5%B6%E8%8C%B6-946ce6?style=flat-square)](https://ifdian.net/a/Akayya)
+
 > **接手/换人开发先读 [`docs/交接文档.md`](docs/交接文档.md)**：环境路径、构建与装机命令、工程地图、硬约束、未完成方向都在里面。
 
 - App 名 **豆格**；包名 `com.pindou.app`（历史原因保持不动，真要改再动 `applicationId` / `namespace`）
 - Kotlin + Jetpack Compose，minSdk 30（Android 11）/ compileSdk 37（Android 17）
 - 不联网、不要账号、不做社区
+- 纯自愿打赏：[爱发电 · Akayya](https://ifdian.net/a/Akayya)（无回报、不锁功能、不打赏照样更新）
 
 ## 当前进度
 
