@@ -11,6 +11,12 @@
 - 不联网、不要账号、不做社区
 - 纯自愿打赏：[爱发电 · Akayya](https://ifdian.net/a/Akayya)（无回报、不锁功能、不打赏照样更新）
 
+## 下载
+
+- 安装包在 [GitHub Releases](https://github.com/Akayya/Douge-Bead-Pattern/releases)：`Douge-<版本>.apk`，要求 Android 11 及以上（minSdk 30）
+- 每个 Release 都附 SHA-256，下载后可自行比对
+- 升级请覆盖安装（图纸与进度会保留）；**卸载会清空 App 内数据**，升级前建议先在「关于 → 数据备份」导出一份
+
 ## 当前进度
 
 | 里程碑 | 内容 | 状态 |
