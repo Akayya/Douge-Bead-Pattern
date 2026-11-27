@@ -320,9 +320,9 @@ douge/
 │     ├─ assets/
 │     │  ├─ palette/        mard221.json、mard291.json（由 scripts/build-palette-assets.py 生成）
 │     │  ├─ support/        赞助二维码：alipay.png、wechat.png（自己放，见该目录 README.txt）
-│     │  └─ samples/        测试用样例截图
+│     │  └─ samples/        测试用样例图（自造，由 scripts/make-samples.py 生成）
 │     └─ res/               图标、主题、字符串
-├─ assets/                  开发用素材（samples/ 参考截图、palette/README.md 数据来源说明、marketing/cover/ 爱发电封面；原始色板 raw/ 不入库）
+├─ assets/                  开发用素材（samples/ 自造测试图、palette/README.md 数据来源说明、marketing/cover/ 爱发电封面；原始色板 raw/ 不入库）
 ├─ docs/                    方案与决策记录（方案与范围.md、方案-M3.md、交接文档.md）
 ├─ screenshots/             模拟器截图，按里程碑分子目录（不入库）
 └─ scripts/
